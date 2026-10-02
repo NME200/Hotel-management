@@ -1,0 +1,936 @@
+<template>
+  <view class="page">
+    <view v-if="!logged" class="empty">
+      <text class="empty-title">请先登录</text>
+      <text class="empty-desc">登录后才能查看订单，正在跳转到「我的」</text>
+    </view>
+
+    <view v-else-if="loading" class="empty">
+      <text class="empty-desc">正在加载订单…</text>
+    </view>
+
+    <view v-else-if="order == null" class="empty">
+      <text class="empty-title">没有查到这笔订单</text>
+      <text class="empty-desc">订单可能已超时关闭，或链接不完整</text>
+      <view class="empty-btn" @click="goList"><text class="empty-btn-text">看全部订单</text></view>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 状态摘要 -->
+      <view class="card">
+        <text class="status-label">{{ statusLabel }}</text>
+        <text v-if="payStatusText.length > 0" class="status-desc">{{ '支付状态：' + payStatusText }}</text>
+        <text class="status-meta">{{ dineText }}</text>
+        <!-- 出餐倒计时：28rpx 深色强调（规范 9.6） -->
+        <text v-if="estimateText.length > 0" class="estimate">{{ estimateText }}</text>
+        <text v-if="payCountdown.length > 0" class="pay-count">{{ payCountdown }}</text>
+        <text class="status-no">{{ orderNoText }}</text>
+      </view>
+
+      <!-- 取餐码提示条 -->
+      <view v-if="pickupCode != null" class="pickup-bar">
+        <text class="pickup-label">取餐码</text>
+        <text class="pickup-code">{{ pickupCode! }}</text>
+      </view>
+
+      <!-- 四步进度指示器 -->
+      <view class="card">
+        <view class="steps">
+          <view v-for="(step, index) in steps" :key="step.code" class="step-item">
+            <view class="step-line-row">
+              <view :class="beforeClass(index)"></view>
+              <view :class="dotClass(step)">
+                <text v-if="step.done" class="dot-check">✓</text>
+                <view v-else-if="!step.current" class="dot-inner"></view>
+              </view>
+              <view :class="afterClass(index)"></view>
+            </view>
+            <text :class="step.done || step.current ? 'step-label step-label-on' : 'step-label'">{{ step.label }}</text>
+            <text v-if="step.at != null" class="step-time">{{ shortTime(step.at) }}</text>
+          </view>
+        </view>
+        <!-- 已取消 / 已退款 / 已就绪的灰色说明 -->
+        <view v-if="closedTip.length > 0" class="note-bar">
+          <text class="note-text">{{ closedTip }}</text>
+        </view>
+      </view>
+
+      <!-- 菜品明细（只读） -->
+      <view class="card">
+        <text class="card-title">菜品</text>
+        <view v-for="item in items" :key="item.id" class="item-row">
+          <view class="thumb-box">
+            <image v-if="item.dishImage != null" class="thumb" :src="item.dishImage!" mode="aspectFill"></image>
+            <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(item.dishName) }}</text></view>
+          </view>
+          <view class="item-main">
+            <text class="item-name">{{ item.dishName }}</text>
+            <text v-if="item.specDesc != null" class="item-spec">{{ item.specDesc! }}</text>
+            <text class="item-unit">¥{{ amountText(item.unitPrice) }}</text>
+          </view>
+          <view class="item-right">
+            <text class="item-count">x{{ item.quantity }}</text>
+            <text class="item-total">¥{{ amountText(item.totalAmount) }}</text>
+          </view>
+        </view>
+        <view v-if="remarkText.length > 0" class="remark-row">
+          <text class="remark-label">我的备注</text>
+          <text class="remark-text">{{ remarkText }}</text>
+        </view>
+        <view v-if="handleRemarkText.length > 0" class="remark-row">
+          <text class="remark-label">商家回复</text>
+          <text class="remark-text">{{ handleRemarkText }}</text>
+        </view>
+      </view>
+
+      <!-- 金额明细：全部取自订单视图，前端不参与计算 -->
+      <view class="card">
+        <text class="card-title">金额</text>
+        <view class="fee-row">
+          <text class="fee-label">菜品金额</text>
+          <text class="fee-value">¥{{ amountText(dishAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">打包费</text>
+          <text class="fee-value">¥{{ amountText(packingAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">配送费</text>
+          <text class="fee-value">¥{{ amountText(deliveryAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">优惠</text>
+          <text :class="discountAmount > 0 ? 'fee-cut' : 'fee-value'">{{ discountAmount > 0 ? '−¥' + amountText(discountAmount) : '¥0' }}</text>
+        </view>
+        <view class="fee-divider"></view>
+        <view class="fee-row">
+          <text class="fee-total-label">实付</text>
+          <text class="fee-total">¥{{ amountText(payAmount) }}</text>
+        </view>
+        <text v-if="cancelReasonText.length > 0" class="fee-tip">{{ cancelReasonText }}</text>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <!-- 去支付 = 唯一主色实心按钮；取消订单 = 描边次按钮 -->
+    <view v-if="logged && !loading && order != null && (canPay || canCancel)" class="action-bar">
+      <view class="bar-row">
+        <view v-if="canCancel" class="btn-ghost" @click="onCancelTap"><text class="btn-ghost-text">取消订单</text></view>
+        <view v-if="canPay" :class="payButtonClass" @click="onPayTap">
+          <text :class="channelReady ? 'btn-main-text' : 'btn-main-text-off'">{{ payButtonText }}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onLoad, onShow, onUnload, onHide } from '@dcloudio/uni-app'
+  import { isLogged } from '../../common/session.uts'
+  import { cancelOrder, createPayment, fetchOrder, fetchPaymentChannels, fetchPaymentStatus } from '../../common/api.uts'
+  import { OrderBrief, OrderItemView, OrderStep, OrderTrace, PaymentChannelOption } from '../../common/models.uts'
+  import { amountText, countdownText, shortTime } from '../../common/format.uts'
+  import { toast } from '../../common/request.uts'
+
+  const orderNo = ref('')
+  const trace = ref<OrderTrace | null>(null)
+  const channels = ref<PaymentChannelOption[]>([] as PaymentChannelOption[])
+  const loading = ref(true)
+  const paying = ref(false)
+  const polling = ref(false)
+  const logged = ref(true)
+  const channelsLoaded = ref(false)
+  /** 渠道接口是否已经回来：决定自动支付能不能定下来「没有可用支付方式」。 */
+  const channelsFetched = ref(false)
+  /** 结算页下单成功后带 autopay=1 过来，进页面自动呼一次支付窗口。 */
+  const autopayPending = ref(false)
+
+  // 轮询句柄必须是普通变量：放 ref 里会被视图层追踪，页面隐藏时清不干净
+  let pollTimer = -1
+
+  const order = computed(() : OrderBrief | null => trace.value == null ? null : trace.value!.order)
+  const steps = computed(() : OrderStep[] => trace.value == null ? ([] as OrderStep[]) : trace.value!.steps)
+  const items = computed(() : OrderItemView[] => order.value == null ? ([] as OrderItemView[]) : order.value!.items)
+  const statusLabel = computed(() : string => order.value == null ? '' : order.value!.statusLabel)
+  const dineText = computed(() : string => {
+    const o = order.value
+    if (o == null) {
+      return ''
+    }
+    const table = o!.tableNo
+    return table == null ? o!.dineTypeLabel : o!.dineTypeLabel + ' · 桌号 ' + table!
+  })
+  const orderNoText = computed(() : string => {
+    const o = order.value
+    if (o == null) {
+      return ''
+    }
+    return '订单号 ' + o!.orderNo + ' · ' + shortTime(o!.createdAt)
+  })
+  const remarkText = computed(() : string => {
+    const value = order.value == null ? null : order.value!.remark
+    return value == null ? '' : value!
+  })
+  const handleRemarkText = computed(() : string => {
+    const value = order.value == null ? null : order.value!.handleRemark
+    return value == null ? '' : value!
+  })
+  const cancelReasonText = computed(() : string => {
+    const value = order.value == null ? null : order.value!.cancelReason
+    return value == null ? '' : '取消原因：' + value!
+  })
+  const pickupCode = computed(() : string | null => order.value == null ? null : order.value!.pickupCode)
+  const estimateText = computed(() : string => trace.value == null ? '' : trace.value!.estimateText)
+  const closedTip = computed(() : string => {
+    const value = trace.value == null ? null : trace.value!.closedTip
+    return value == null ? '' : value!
+  })
+  const dishAmount = computed(() : number => order.value == null ? 0 : order.value!.dishAmount)
+  const packingAmount = computed(() : number => order.value == null ? 0 : order.value!.packingAmount)
+  const deliveryAmount = computed(() : number => order.value == null ? 0 : order.value!.deliveryAmount)
+  const discountAmount = computed(() : number => order.value == null ? 0 : order.value!.discountAmount)
+  const payAmount = computed(() : number => order.value == null ? 0 : order.value!.payAmount)
+  const canPay = computed(() : boolean => order.value == null ? false : order.value!.canPay)
+  const canCancel = computed(() : boolean => order.value == null ? false : order.value!.canCancel)
+  const channelReady = computed(() : boolean => channels.value.length > 0)
+  const payRemaining = computed(() : number | null => order.value == null ? null : order.value!.payRemainingSeconds)
+  const payCountdown = computed(() : string => {
+    const left = payRemaining.value
+    if (left == null || !canPay.value) {
+      return ''
+    }
+    return '支付倒计时 ' + countdownText(left!)
+  })
+  /** 后端状态机：只有这三态还在往前走，才值得轮询。 */
+  const needPoll = computed(() : boolean => {
+    const status = order.value == null ? '' : order.value!.status
+    return status == 'pending' || status == 'accepted' || status == 'preparing'
+  })
+  const payStatusText = computed(() : string => order.value == null ? '' : order.value!.payStatusLabel)
+  const payButtonText = computed(() : string => {
+    if (paying.value) {
+      return '支付处理中…'
+    }
+    if (!channelReady.value) {
+      return '暂无可用支付方式'
+    }
+    return '去支付 ¥' + amountText(payAmount.value)
+  })
+  const payButtonClass = computed(() : string => {
+    if (!channelReady.value) {
+      return canCancel.value ? 'btn-main btn-main-off btn-main-gap' : 'btn-main btn-main-off'
+    }
+    return canCancel.value ? 'btn-main btn-main-gap' : 'btn-main'
+  })
+
+  function firstChar(name: string) : string {
+    return name.length == 0 ? '菜' : name.substring(0, 1)
+  }
+
+  function stepAt(index: number) : OrderStep | null {
+    if (index < 0 || index >= steps.value.length) {
+      return null
+    }
+    return steps.value[index]
+  }
+
+  function dotClass(step: OrderStep) : string {
+    if (step.done) {
+      return 'step-dot step-dot-done'
+    }
+    if (step.current) {
+      return 'step-dot step-dot-current'
+    }
+    return 'step-dot step-dot-idle'
+  }
+
+  /** 连接线：已完成段 $brand，未完成段 $divider，两端各留一段透明占位让圆点对齐。 */
+  function beforeClass(index: number) : string {
+    if (index == 0) {
+      return 'step-line step-line-none'
+    }
+    const prev = stepAt(index - 1)
+    return prev != null && prev!.done ? 'step-line step-line-on' : 'step-line step-line-off'
+  }
+
+  function afterClass(index: number) : string {
+    if (index >= steps.value.length - 1) {
+      return 'step-line step-line-none'
+    }
+    const cur = stepAt(index)
+    return cur != null && cur!.done ? 'step-line step-line-on' : 'step-line step-line-off'
+  }
+
+  async function loadChannels() : Promise<void> {
+    channels.value = await fetchPaymentChannels()
+    channelsFetched.value = true
+    tryAutopay()
+  }
+
+  /**
+   * 下单后自动进支付：订单和渠道两件事都回来才判定，谁后到谁触发这一次。
+   * 只认第一次，手动再点走 onPayTap，不会重复弹支付窗口。
+   */
+  function tryAutopay() : void {
+    if (!autopayPending.value || !channelsFetched.value) {
+      return
+    }
+    const o = order.value
+    if (o == null || !o!.canPay) {
+      autopayPending.value = false
+      return
+    }
+    autopayPending.value = false
+    doPay()
+  }
+
+  async function refresh() : Promise<void> {
+    loading.value = trace.value == null
+    const next = await fetchOrder(orderNo.value)
+    loading.value = false
+    if (next == null) {
+      trace.value = null
+      stopPolling()
+      return
+    }
+    trace.value = next!
+    syncPolling()
+    tryAutopay()
+  }
+
+  async function silentRefresh() : Promise<void> {
+    const next = await fetchOrder(orderNo.value)
+    if (next == null) {
+      return
+    }
+    trace.value = next!
+    syncPolling()
+  }
+
+  function syncPolling() : void {
+    if (needPoll.value) {
+      startPolling()
+    } else {
+      stopPolling()
+    }
+  }
+
+  function startPolling() : void {
+    if (polling.value) {
+      return
+    }
+    polling.value = true
+    pollTimer = setInterval(() => {
+      silentRefresh()
+    }, 15000)
+  }
+
+  function stopPolling() : void {
+    if (!polling.value) {
+      return
+    }
+    polling.value = false
+    clearInterval(pollTimer)
+  }
+
+  /** payParams 的每个值都是字符串（后端类型是 Record<string, string>）。 */
+  function paramText(params: UTSJSONObject, key: string) : string {
+    const value = params[key]
+    return value == null ? '' : ('' + value)
+  }
+
+  function invokeWxPay(params: UTSJSONObject) : Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      // #ifdef MP-WEIXIN
+      uni.requestPayment({
+        provider: 'wxpay',
+        orderInfo: '',
+        timeStamp: paramText(params, 'timeStamp'),
+        nonceStr: paramText(params, 'nonceStr'),
+        "package": paramText(params, 'package'),
+        signType: paramText(params, 'signType'),
+        paySign: paramText(params, 'paySign'),
+        success: (_) => {
+          resolve(true)
+        },
+        fail: (err) => {
+          toast('支付未完成：' + err.errMsg)
+          resolve(false)
+        },
+      })
+      // #endif
+      // #ifndef MP-WEIXIN
+      resolve(false)
+      // #endif
+    })
+  }
+
+  function waitMs(ms: number) : Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve()
+      }, ms)
+    })
+  }
+
+  /** 支付是异步的：最多查 6 次单，每次间隔 1.5 秒，绝不自己判定成功。 */
+  async function pollPayment(paymentNo: string) : Promise<void> {
+    for (let i = 0; i < 6; i++) {
+      await waitMs(1500)
+      const view = await fetchPaymentStatus(paymentNo)
+      if (view == null) {
+        continue
+      }
+      const status = view!.status
+      if (status == 'succeeded') {
+        toast('支付成功')
+        await refresh()
+        return
+      }
+      if (status == 'failed' || status == 'closed') {
+        toast('支付未完成')
+        await refresh()
+        return
+      }
+    }
+    toast('支付结果确认中，页面会自动刷新')
+    await refresh()
+  }
+
+  function onPayTap() : void {
+    doPay()
+  }
+
+  async function doPay() : Promise<void> {
+    if (paying.value) {
+      return
+    }
+    const o = order.value
+    if (o == null) {
+      return
+    }
+    if (!channelReady.value) {
+      toast('暂无可用支付方式')
+      return
+    }
+    paying.value = true
+    const channel = channels.value[0].value
+    const payment = await createPayment(o!.orderNo, channel)
+    if (payment == null) {
+      paying.value = false
+      return
+    }
+    const paymentNo = payment!.paymentNo
+    const params = payment!.payParams
+    if (params == null || channel == 'mock' || payment!.channel == 'mock') {
+      // 模拟支付：不假装成功，只刷新订单状态
+      paying.value = false
+      toast('当前为模拟支付，请在订单列表查看状态')
+      await refresh()
+      return
+    }
+    const launched = await invokeWxPay(params!)
+    if (!launched) {
+      paying.value = false
+      return
+    }
+    await pollPayment(paymentNo)
+    paying.value = false
+  }
+
+  function onCancelTap() : void {
+    uni.showModal({
+      title: '取消订单',
+      content: '确定要取消这笔订单吗？',
+      confirmText: '确定',
+      cancelText: '再想想',
+      success: (res) => {
+        if (res.confirm) {
+          doCancel()
+        }
+      },
+    })
+  }
+
+  async function doCancel() : Promise<void> {
+    const result = await cancelOrder(orderNo.value, '顾客主动取消')
+    if (result.code != 0) {
+      toast(result.message.length == 0 ? '取消失败，请稍后重试' : result.message)
+      return
+    }
+    await refresh()
+  }
+
+  function goList() : void {
+    uni.navigateTo({ url: '/pages/order/list' })
+  }
+
+  /** 和 common/entry.uts 同一套取参写法。 */
+  function readOption(options: OnLoadOptions, key: string) : string {
+    const value = options[key]
+    if (value == null) {
+      return ''
+    }
+    return value as string
+  }
+
+  onLoad((options: OnLoadOptions) => {
+    orderNo.value = readOption(options, 'orderNo')
+    autopayPending.value = readOption(options, 'autopay') == '1'
+  })
+
+  onShow(() => {
+    if (!isLogged()) {
+      logged.value = false
+      toast('请先登录后再查看订单')
+      uni.switchTab({ url: '/pages/mine/mine' })
+      return
+    }
+    logged.value = true
+    // 渠道接口要登录态，未登录时调它只会拿到 401，所以放在登录检查之后
+    if (!channelsLoaded.value) {
+      channelsLoaded.value = true
+      loadChannels()
+    }
+    refresh()
+  })
+
+  onHide(() => {
+    stopPolling()
+  })
+
+  onUnload(() => {
+    stopPolling()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding: $page-padding;
+  }
+
+  .card {
+    padding: $space-4;
+    margin-bottom: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .card-title {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    margin-bottom: $space-2;
+  }
+
+  /* 状态摘要 */
+  .status-label {
+    font-size: $font-h1;
+    font-weight: $semibold;
+    line-height: $line-h1;
+    color: $text-1;
+  }
+
+  .status-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .status-meta {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 出餐倒计时：14pt #1A1A1A 强调（规范 9.6） */
+  .estimate {
+    margin-top: $space-3;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .pay-count {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  .status-no {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 取餐码提示条 */
+  .pickup-bar {
+    padding: $space-4;
+    margin-bottom: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-card;
+    align-items: center;
+  }
+
+  .pickup-label {
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  .pickup-code {
+    margin-top: $space-1;
+    font-size: $font-price-lg;
+    font-weight: $bold;
+    line-height: $line-price-lg;
+    color: $brand;
+  }
+
+  /* 四步进度 */
+  .steps {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .step-item {
+    flex: 1;
+    align-items: center;
+  }
+
+  .step-line-row {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+  }
+
+  .step-line {
+    flex: 1;
+    height: 4rpx;
+  }
+
+  .step-line-on {
+    background-color: $brand;
+  }
+
+  .step-line-off {
+    background-color: $divider;
+  }
+
+  .step-line-none {
+    background-color: transparent;
+  }
+
+  .step-dot {
+    width: 40rpx;
+    height: 40rpx;
+    border-radius: 40rpx;
+    background-color: #FFFFFF;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .step-dot-done {
+    background-color: $brand;
+  }
+
+  .step-dot-current {
+    border: 3rpx solid $brand;
+  }
+
+  .step-dot-idle {
+    border: 1px solid $divider;
+  }
+
+  .dot-check {
+    font-size: $font-small;
+    line-height: $line-small;
+    color: #FFFFFF;
+  }
+
+  .dot-inner {
+    width: 12rpx;
+    height: 12rpx;
+    border-radius: 12rpx;
+    background-color: $text-4;
+  }
+
+  .step-label {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .step-label-on {
+    color: $text-1;
+  }
+
+  .step-time {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .note-bar {
+    margin-top: $space-3;
+    padding: $space-2 $space-3;
+    background-color: $chip-bg;
+    border-radius: $radius-tag;
+  }
+
+  .note-text {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 菜品行（只读） */
+  .item-row {
+    flex-direction: row;
+    align-items: center;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .thumb-box {
+    width: 96rpx;
+    height: 96rpx;
+  }
+
+  .thumb {
+    width: 96rpx;
+    height: 96rpx;
+    border-radius: $radius-thumb;
+    background-color: $page-bg;
+  }
+
+  .thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-char {
+    font-size: 32rpx;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .item-main {
+    flex: 1;
+    margin-left: $space-2;
+  }
+
+  .item-name {
+    font-size: $font-h3;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .item-spec {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .item-unit {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .item-right {
+    align-items: flex-end;
+    margin-left: $space-2;
+  }
+
+  .item-count {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .item-total {
+    margin-top: $space-1;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .remark-row {
+    flex-direction: row;
+    margin-top: $space-3;
+  }
+
+  .remark-label {
+    font-size: $font-caption;
+    color: $text-3;
+    width: 120rpx;
+  }
+
+  .remark-text {
+    flex: 1;
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  /* 金额 */
+  .fee-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .fee-label {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .fee-value {
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .fee-cut {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .fee-divider {
+    height: 1px;
+    margin-top: $space-3;
+    background-color: $divider;
+  }
+
+  .fee-total-label {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .fee-total {
+    font-size: $font-price;
+    font-weight: $semibold;
+    line-height: $line-price;
+    color: $brand;
+  }
+
+  .fee-tip {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .bottom-space {
+    @include safe-height(240rpx);
+  }
+
+  /* 底部操作栏 */
+  .action-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: $space-3 $space-4 $space-3 $space-4;
+    @include safe-bottom($space-3);
+    background-color: $card-bg;
+    box-shadow: $shadow-bar;
+  }
+
+  .bar-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .btn-ghost {
+    flex: 1;
+    height: 96rpx;
+    border: 3rpx solid $brand;
+    border-radius: $radius-btn-lg;
+    background-color: #FFFFFF;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .btn-ghost-text {
+    font-size: 32rpx;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .btn-main {
+    flex: 2;
+    height: 96rpx;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .btn-main-gap {
+    margin-left: $space-3;
+  }
+
+  .btn-main-off {
+    background-color: $divider;
+  }
+
+  .btn-main-text {
+    font-size: 32rpx;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .btn-main-text-off {
+    font-size: 32rpx;
+    color: $text-4;
+  }
+
+  /* 空状态 */
+  .empty {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: 88rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+</style>

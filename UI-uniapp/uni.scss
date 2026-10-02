@@ -1,0 +1,107 @@
+/* 设计令牌：点餐小程序UI设计规范.md 第二到第六章的 SCSS 变量版。
+ *
+ * uni.scss 会被自动注入到每个 .uvue 的 <style lang="scss"> 里，
+ * 所以页面样式一律引用变量，不写死色值——交付检查清单第一条要求的就是这个。
+ *
+ * 单位用 rpx：设计稿基准 375pt，小程序 750rpx = 屏宽，因此规范里的 1pt = 2rpx。
+ */
+
+/* 主色 */
+$brand: #3FBF7F;
+$brand-dark: #2FA268;
+$brand-light: #E8F7EF;
+$brand-bg: #F3FBF6;
+$brand-gradient-from: #5FD49B;
+$brand-gradient-to: #35B17A;
+
+/* 中性色 */
+$text-1: #1A1A1A;
+$text-2: #5C5C5C;
+$text-3: #9A9A9A;
+$text-4: #C4C4C4;
+$divider: #EFEFEF;
+$page-bg: #F7F8F7;
+$card-bg: #FFFFFF;
+$chip-bg: #F2F3F2;
+
+/* 功能色 */
+$price-red: #FF5A3C;
+$badge-red: #F5483B;
+$warn: #FFB020;
+
+/* 字号（pt × 2 = rpx） */
+$font-h1: 40rpx;
+$font-h2: 34rpx;
+$font-h3: 30rpx;
+$font-body: 28rpx;
+$font-caption: 24rpx;
+$font-small: 20rpx;
+$font-price: 36rpx;
+$font-price-lg: 48rpx;
+
+$line-h1: 56rpx;
+$line-h2: 48rpx;
+$line-h3: 44rpx;
+$line-body: 40rpx;
+$line-caption: 36rpx;
+$line-small: 28rpx;
+$line-price: 48rpx;
+$line-price-lg: 64rpx;
+
+/* 字重 */
+$regular: 400;
+$medium: 500;
+$semibold: 600;
+$bold: 700;
+
+/* 圆角 */
+$radius-card: 32rpx;
+$radius-member: 40rpx;
+$radius-btn-lg: 999rpx;
+$radius-btn-sm: 999rpx;
+$radius-tag: 999rpx;
+$radius-thumb: 20rpx;
+$radius-sheet: 40rpx;
+$radius-search: 999rpx;
+
+/* 间距：基础 4pt = 8rpx */
+$space-1: 8rpx;
+$space-2: 16rpx;
+$space-3: 24rpx;
+$space-4: 32rpx;
+$space-5: 40rpx;
+$space-6: 48rpx;
+$page-padding: 32rpx;
+
+/* 关键尺寸 */
+$bar-cart-height: 112rpx;
+$bar-action-height: 128rpx;
+$list-item-height: 192rpx;
+$thumb-list: 160rpx;
+$thumb-detail: 128rpx;
+$icon-category: 96rpx;
+$hit-min: 88rpx;
+
+/* 投影：全站只允许一层；渐变卡片不加投影 */
+$shadow-card: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+$shadow-bar: 0 -4rpx 24rpx rgba(0, 0, 0, 0.06);
+
+/* 底部安全区。
+ *
+ * uni 会在每个页面根节点上注入 --uni-safe-area-inset-bottom（全面屏 home indicator 的高度），
+ * 固定底栏和底部弹层都要按它垫高，否则主按钮会被手势条压住；
+ * 带原生 tabBar 的页面（首页、点餐页）不用管——webview 本身就被 tabBar 截在安全区之上。
+ *
+ * 先写一条不含 calc 的兜底，再写带 var 的那条：不支持 calc/var 的端会忽略第二条，退回固定内边距。
+ */
+@mixin safe-bottom($base) {
+  padding-bottom: $base;
+  padding-bottom: calc(#{$base} + var(--uni-safe-area-inset-bottom, 0px));
+}
+
+/* 滚动区末尾的占位块：固定底栏被安全区垫高时占位也要跟着长，否则最后一张卡会被底栏压住。
+ * 同样先给不含 calc 的兜底，避免不支持时整个 height 失效变成 0。 */
+@mixin safe-height($base) {
+  height: $base;
+  height: calc(#{$base} + var(--uni-safe-area-inset-bottom, 0px));
+}

@@ -1,0 +1,555 @@
+<template>
+  <view class="page">
+    <!-- 会员中心必须有账号才有数据，但页面不能白屏：给一个登录入口 -->
+    <view v-if="!logged" class="empty">
+      <text class="empty-title">登录后即可查看会员中心</text>
+      <text class="empty-desc">会员等级、成长值与权益都跟着微信账号走</text>
+      <view class="empty-btn" @click="tapLogin"><text class="empty-btn-text">点击登录</text></view>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 会员卡：渐变底 + 圆角 20pt，渐变卡不加投影（规范第六章） -->
+      <view class="mcard">
+        <text class="mcard-level">{{ levelLabel() }}</text>
+        <view class="mcard-growth">
+          <text class="mcard-num">{{ growthText() }}</text>
+          <text class="mcard-unit">成长值</text>
+        </view>
+        <text class="mcard-tip">{{ upgradeTip() }}</text>
+
+        <view v-if="hasNext()" class="mcard-track">
+          <view class="mcard-fill" :style="{ width: fillWidth }"></view>
+        </view>
+        <view v-if="hasNext()" class="mcard-scale">
+          <text class="mcard-scale-text">{{ scaleLeft() }}</text>
+          <text class="mcard-scale-text">{{ scaleRight() }}</text>
+        </view>
+      </view>
+
+      <!-- 我的权益：两行 × 四列图标宫格 -->
+      <view class="card">
+        <text class="card-title">我的权益</text>
+        <view v-if="benefits.length == 0" class="hint">
+          <text class="hint-text">当前等级还没有配置权益</text>
+        </view>
+        <view v-else class="grid">
+          <view v-for="item in benefits" :key="item.code" class="grid-item">
+            <view class="icon-circle"><text class="icon-char">{{ iconChar(item.icon) }}</text></view>
+            <text class="grid-name">{{ item.name }}</text>
+            <text class="grid-desc">{{ item.desc }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 成长任务：只报进度，奖励由服务端在达成那一刻发放，所以没有「点击领取」 -->
+      <view class="card">
+        <text class="card-title">成长任务</text>
+        <text class="card-note">达成即自动发放，无需手动领取</text>
+        <view v-if="tasks.length == 0" class="hint">
+          <text class="hint-text">暂时没有进行中的任务</text>
+        </view>
+        <view v-for="task in tasks" :key="task.code" :class="task.code == lastTaskCode() ? 'task-row task-row-last' : 'task-row'">
+          <view class="icon-circle icon-circle-sm"><text class="icon-char">{{ iconChar(task.icon) }}</text></view>
+          <view class="task-main">
+            <text class="task-name">{{ task.name }}</text>
+            <text class="task-desc">{{ task.desc }}</text>
+          </view>
+          <view class="task-right">
+            <text class="task-reward">+{{ task.rewardGrowth }} 成长值</text>
+            <view v-if="task.done" class="task-done">
+              <view class="done-dot"></view>
+              <text class="done-text">已达成</text>
+            </view>
+            <text v-else class="task-progress">{{ task.current }}/{{ task.target }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 进行中的活动：商户在商家端「活动运营位」配的内容，slot=member，没配就不显示这块 -->
+      <view v-if="activities.length > 0" class="card">
+        <text class="card-title">进行中的活动</text>
+        <view v-for="(item, index) in activities" :key="item.id" :class="index == activities.length - 1 ? 'task-row task-row-last' : 'task-row'" @click="tapActivity(item)">
+          <view class="icon-circle icon-circle-sm"><text class="icon-char">{{ iconChar(item.icon) }}</text></view>
+          <view class="task-main">
+            <text class="task-name act-name">{{ item.title }}</text>
+            <text class="task-desc">{{ cardSub(item) }}</text>
+          </view>
+          <text class="act-go">{{ cardGo(item) }}</text>
+        </view>
+      </view>
+
+      <!-- 会员日提示条：文案完全由后端 memberDay 驱动 -->
+      <view class="daybar">
+        <text class="daybar-icon">日</text>
+        <text class="daybar-text">{{ dayText() }}</text>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { ActivityCard, Benefit, MemberBrief, MemberDay, NextLevel, TaskItem } from '../../common/models.uts'
+  import { fetchActivities, fetchMemberCenter, login } from '../../common/api.uts'
+  import { isLogged, merchantCode } from '../../common/session.uts'
+  import { cardGo, cardSub, iconChar, openCard } from '../../common/activity.uts'
+  import { toast } from '../../common/request.uts'
+
+  const logged = ref(false)
+  const member = ref<MemberBrief | null>(null)
+  const benefits = ref<Benefit[]>([] as Benefit[])
+  const tasks = ref<TaskItem[]>([] as TaskItem[])
+  const activities = ref<ActivityCard[]>([] as ActivityCard[])
+  const day = ref<MemberDay | null>(null)
+
+  const fillWidth = computed(() : string => {
+    const m = member.value
+    if (m == null) {
+      return '0%'
+    }
+    let pct = Math.round(m!.levelProgress * 100)
+    if (pct < 0) {
+      pct = 0
+    }
+    if (pct > 100) {
+      pct = 100
+    }
+    return '' + pct + '%'
+  })
+
+  function nextOf() : NextLevel | null {
+    const m = member.value
+    if (m == null) {
+      return null
+    }
+    return m!.nextLevel
+  }
+
+  function hasNext() : boolean {
+    return nextOf() != null
+  }
+
+  function levelLabel() : string {
+    const m = member.value
+    return m == null ? '会员' : m!.levelLabel
+  }
+
+  function growthText() : string {
+    const m = member.value
+    return m == null ? '0' : '' + m!.growthValue
+  }
+
+  function upgradeTip() : string {
+    const next = nextOf()
+    if (next == null) {
+      return '已是最高等级'
+    }
+    return '还需 ' + next!.remaining + ' 成长值升级到 ' + next!.label
+  }
+
+  /**
+   * 进度条两端档位值：后端只给了下一档阈值（nextLevel.threshold）与档内进度，
+   * 没有当前档位阈值字段，所以左端按 0 起步标注，不编造任何数字。
+   */
+  function scaleLeft() : string {
+    return '0'
+  }
+
+  function scaleRight() : string {
+    const next = nextOf()
+    return next == null ? '' : '' + next!.threshold
+  }
+
+  function lastTaskCode() : string {
+    const list = tasks.value
+    return list.length == 0 ? '' : list[list.length - 1].code
+  }
+
+  function daysText(days: number[]) : string {
+    let out = ''
+    for (const item of days) {
+      out = out.length == 0 ? '' + item : out + '/' + item
+    }
+    return out
+  }
+
+  function dayText() : string {
+    const info = day.value
+    if (info == null) {
+      return '会员日规则：每月 8/18/28 日完成订单，成长值翻倍'
+    }
+    if (info!.isMemberDay) {
+      return '今天是会员日，消费 1 元可得 ' + info!.rewardPerYuan + ' 点成长值'
+    }
+    const names = daysText(info!.memberDays)
+    if (names.length == 0) {
+      return '距下一个会员日还有 ' + info!.daysUntilNext + ' 天'
+    }
+    return '每月 ' + names + ' 日为会员日 · 距下一个会员日还有 ' + info!.daysUntilNext + ' 天'
+  }
+
+  async function load() : Promise<void> {
+    logged.value = isLogged()
+    if (!logged.value) {
+      member.value = null
+      benefits.value = [] as Benefit[]
+      tasks.value = [] as TaskItem[]
+      activities.value = [] as ActivityCard[]
+      day.value = null
+      return
+    }
+    const data = await fetchMemberCenter()
+    activities.value = await loadActivities()
+    if (data == null) {
+      member.value = null
+      benefits.value = [] as Benefit[]
+      tasks.value = [] as TaskItem[]
+      day.value = null
+      return
+    }
+    member.value = data!.member
+    benefits.value = data!.benefits
+    tasks.value = data!.tasks
+    day.value = data!.memberDay
+  }
+
+  /** 活动不依赖会员身份，未登录也能配好；没有门店就没有租户键，直接给空列表而不是弹提示。 */
+  async function loadActivities() : Promise<ActivityCard[]> {
+    if (merchantCode().length == 0) {
+      return [] as ActivityCard[]
+    }
+    return fetchActivities('member')
+  }
+
+  function tapActivity(item: ActivityCard) : void {
+    openCard(item)
+  }
+
+  /** 登录只走后端真实微信 code，失败原样 toast 后端文案。 */
+  function tapLogin() : void {
+    doLogin()
+  }
+
+  async function doLogin() : Promise<void> {
+    const result = await login('', '')
+    if (result.code != 0) {
+      toast(result.message)
+      return
+    }
+    await load()
+    toast('登录成功')
+  }
+
+  onShow(() => {
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+    padding-top: $space-3;
+  }
+
+  /* 会员卡：渐变不加投影（规范第六章） */
+  .mcard {
+    padding: $space-4;
+    border-radius: $radius-member;
+    background-image: linear-gradient(135deg, $brand-gradient-from, $brand-gradient-to);
+  }
+
+  .mcard-level {
+    font-size: $font-h1;
+    font-weight: $semibold;
+    color: #FFFFFF;
+  }
+
+  .mcard-growth {
+    flex-direction: row;
+    align-items: baseline;
+    margin-top: $space-3;
+  }
+
+  .mcard-num {
+    font-size: $font-price-lg;
+    font-weight: $semibold;
+    color: #FFFFFF;
+  }
+
+  .mcard-unit {
+    margin-left: $space-1;
+    font-size: $font-caption;
+    color: #FFFFFF;
+  }
+
+  .mcard-tip {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: rgba(255, 255, 255, 0.9);
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .mcard-track {
+    margin-top: $space-3;
+    height: 16rpx;
+    border-radius: 16rpx;
+    background-color: rgba(255, 255, 255, 0.35);
+  }
+
+  .mcard-fill {
+    height: 16rpx;
+    border-radius: 16rpx;
+    background-color: #FFFFFF;
+  }
+
+  .mcard-scale {
+    flex-direction: row;
+    justify-content: space-between;
+    margin-top: $space-1;
+  }
+
+  .mcard-scale-text {
+    font-size: $font-small;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  /* 通用白卡 */
+  .card {
+    margin-top: $space-4;
+    padding: $space-4;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .card-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .card-note {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .hint {
+    padding-top: $space-4;
+    padding-bottom: $space-2;
+    align-items: center;
+  }
+
+  .hint-text {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 权益宫格：两行 × 四列 */
+  .grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: $space-3;
+  }
+
+  .grid-item {
+    width: 25%;
+    align-items: center;
+    padding-top: $space-2;
+    padding-bottom: $space-2;
+    padding-left: $space-1;
+    padding-right: $space-1;
+  }
+
+  .icon-circle {
+    width: $icon-category;
+    height: $icon-category;
+    border-radius: $icon-category;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .icon-circle-sm {
+    width: 72rpx;
+    height: 72rpx;
+    border-radius: 72rpx;
+  }
+
+  .icon-char {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .grid-name {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .grid-desc {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+    lines: 2;
+    text-overflow: ellipsis;
+    text-align: center;
+  }
+
+  /* 成长任务列表行 */
+  .task-row {
+    flex-direction: row;
+    align-items: center;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .task-row-last {
+    border-bottom: none;
+  }
+
+  .task-main {
+    flex: 1;
+    margin-left: $space-3;
+  }
+
+  .task-name {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .task-desc {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .task-right {
+    width: 208rpx;
+    align-items: flex-end;
+  }
+
+  /* 活动行右侧的入口文字：内容由后端 actionText 下发 */
+  .act-go {
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  .task-reward {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .task-done {
+    flex-direction: row;
+    align-items: center;
+    margin-top: $space-1;
+  }
+
+  .done-dot {
+    width: 24rpx;
+    height: 24rpx;
+    border-radius: 24rpx;
+    background-color: $brand;
+    margin-right: $space-1;
+  }
+
+  .done-text {
+    font-size: $font-small;
+    color: $brand;
+  }
+
+  .task-progress {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  /* 会员日提示条 */
+  .daybar {
+    flex-direction: row;
+    align-items: center;
+    margin-top: $space-4;
+    padding: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-card;
+  }
+
+  .daybar-icon {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $brand;
+    margin-right: $space-2;
+  }
+
+  .daybar-text {
+    flex: 1;
+    font-size: $font-caption;
+    color: $text-2;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  /* 未登录 */
+  .empty {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .bottom-space {
+    height: 96rpx;
+  }
+</style>

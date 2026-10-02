@@ -1,0 +1,171 @@
+// 统一请求层。
+//
+// 后端响应体固定是 { code, message, data, timestamp, requestId }，成功 code = 0；
+// 失败沿用 HTTP 语义码。这里把两层判断（HTTP 状态 + 业务 code）压成一次调用结果，
+// 页面只需要关心「拿到数据了吗」。
+//
+// 前端不做环境区分（DESIGN.md 明确要求按生产级别开发），
+// 因此只有一个 API_BASE_URL 常量：上线前改成正式 https 域名，
+// 并在小程序后台把该域名配进 request 合法域名列表。
+//
+// 所有字段读取都用下标 obj[key]：uni.request 的 res.data 运行时是普通对象，
+// 调 getString/getJSONObject 会在小程序端抛 not a function（见 common/json.uts 同款说明）。
+
+import { accessToken, refreshToken, clearSession, saveTokens, merchantCode } from "./session.uts";
+
+/** 本机验收地址：微信开发者工具需勾选「不校验合法域名、web-view、TLS 版本以及 HTTPS 证书」。 */
+export const API_BASE_URL = "http://127.0.0.1:8000/api/v1";
+
+export type ApiResult = {
+  /** 0 表示成功；非 0 时 message 可直接展示给顾客 */
+  code: number;
+  message: string;
+  data: UTSJSONObject | null;
+  /** HTTP 状态，用于区分 401 这类需要额外动作的情况 */
+  status: number;
+};
+
+function buildUrl(path: string): string {
+  if (path.startsWith("http")) {
+    return path;
+  }
+  return API_BASE_URL + path;
+}
+
+/**
+ * 顾客侧接口都要带门店编号（后端叫 merchantCode），这里统一注入：
+ * 已带 merchantCode 的请求体不覆盖，缺省时补上当前门店。
+ */
+function withMerchant(data: UTSJSONObject | null): UTSJSONObject {
+  const payload: UTSJSONObject = data == null ? {} : data;
+  const code = merchantCode();
+  if (code.length > 0 && payload["merchantCode"] == null) {
+    payload["merchantCode"] = code;
+  }
+  return payload;
+}
+
+/**
+ * 取出响应里的 data。
+ *
+ * 一部分接口的 data 直接是数组（券列表、今日推荐、可支付渠道），
+ * 而 UTSJSONObject 只能表达对象，所以数组统一包成 { data: [...] }，
+ * 模型层用同一个入口取数组。
+ */
+function readData(body: UTSJSONObject): UTSJSONObject | null {
+  const value = body["data"];
+  if (value == null) {
+    return null;
+  }
+  if (value instanceof Array) {
+    return { "data": value } as UTSJSONObject;
+  }
+  return value as UTSJSONObject;
+}
+
+export function request(path: string, method: string, data: UTSJSONObject | null): Promise<ApiResult> {
+  const promise = new Promise<ApiResult>((resolve, reject) => {
+    const header: UTSJSONObject = { "Content-Type": "application/json" };
+    const token = accessToken();
+    if (token.length > 0) {
+      header["Authorization"] = "Bearer " + token;
+    }
+    uni.request<UTSJSONObject>({
+      url: buildUrl(path),
+      method: method,
+      data: withMerchant(data),
+      header: header,
+      timeout: 15000,
+      success: (res) => {
+        const body = res.data;
+        if (body == null) {
+          resolve({ code: -1, message: "服务没有返回内容", data: null, status: res.statusCode });
+          return;
+        }
+        const rawCode = body["code"];
+        const rawMessage = body["message"];
+        const code = rawCode == null ? -1 : (rawCode as number);
+        const message = rawMessage == null ? "" : (rawMessage as string);
+        if (res.statusCode == 401) {
+          // 令牌过期：清掉本地登录态，页面据此引导重新登录，不能拿旧令牌硬撑
+          clearSession();
+          resolve({ code: 401, message: message.length > 0 ? message : "请重新登录", data: null, status: 401 });
+          return;
+        }
+        if (code == 0) {
+          resolve({ code: 0, message: message, data: readData(body), status: res.statusCode });
+          return;
+        }
+        resolve({
+          code: code,
+          message: message.length > 0 ? message : "操作失败，请稍后重试",
+          data: null,
+          status: res.statusCode,
+        });
+      },
+      fail: (err) => {
+        resolve({ code: -1, message: "网络不通：" + err.errMsg, data: null, status: 0 });
+      },
+    });
+  });
+  return promise;
+}
+
+export function get(path: string, data: UTSJSONObject | null): Promise<ApiResult> {
+  return request(path, "GET", data);
+}
+
+export function post(path: string, data: UTSJSONObject | null): Promise<ApiResult> {
+  return request(path, "POST", data);
+}
+
+export function patch(path: string, data: UTSJSONObject | null): Promise<ApiResult> {
+  return request(path, "PATCH", data);
+}
+
+/**
+ * 令牌失效时用它静默续一次：wx.login 换新 code + refreshToken 续期。
+ * 续期成功返回 true，调用方重试原请求；失败就得让顾客重新登录。
+ */
+export async function silentRefresh(): Promise<boolean> {
+  const refresh = refreshToken();
+  if (refresh.length == 0) {
+    return false;
+  }
+  const code = await wxLoginCode();
+  if (code.length == 0) {
+    return false;
+  }
+  const result = await post("/client/auth/refresh", { refreshToken: refresh, code: code });
+  if (result.code != 0 || result.data == null) {
+    return false;
+  }
+  const data = result.data!;
+  const access = data["accessToken"];
+  const next = data["refreshToken"];
+  if (access == null || next == null) {
+    return false;
+  }
+  saveTokens(access as string, next as string);
+  return true;
+}
+
+/** wx.login 拿一次性 code。后端不做任何模拟登录，code 换不到 openid 就是登录失败。 */
+export function wxLoginCode(): Promise<string> {
+  return new Promise<string>((resolve) => {
+    uni.login({
+      provider: "weixin",
+      success: (res) => {
+        resolve(res.code == null ? "" : res.code);
+      },
+      fail: (_) => {
+        resolve("");
+      },
+    });
+  });
+}
+
+/** 统一的轻提示：失败原因后端已经写好话术，前端不改写。 */
+export function toast(message: string): void {
+  uni.showToast({ title: message, icon: "none", duration: 2200 });
+}

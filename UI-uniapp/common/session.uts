@@ -1,0 +1,73 @@
+// 登录态与门店上下文。
+//
+// 两件事必须同时记住，缺一不可：
+// 1. 令牌（accessToken/refreshToken）——决定「我是谁」；
+// 2. 门店编号 merchantCode——决定「我在哪家店」。
+// 小程序是 SaaS 多商户，扫码进来的门店要一路带着，
+// 所以它和令牌一样落本地存储，冷启动时一起恢复。
+//
+// 用「函数 + storage」而不是全局响应式对象：页面都在 onShow 里重读，
+// 跨页同步走 uni.$emit('session-changed')，避免 .uts 模块级可变状态的加载顺序坑。
+
+const KEY_ACCESS_TOKEN = "dc_access_token";
+const KEY_REFRESH_TOKEN = "dc_refresh_token";
+const KEY_MERCHANT_CODE = "dc_merchant_code";
+const KEY_NICKNAME = "dc_nickname";
+
+function readText(key: string): string {
+  const value = uni.getStorageSync(key);
+  if (value == null) {
+    return "";
+  }
+  return value as string;
+}
+
+function writeText(key: string, value: string): void {
+  uni.setStorageSync(key, value);
+}
+
+export function accessToken(): string {
+  return readText(KEY_ACCESS_TOKEN);
+}
+
+export function refreshToken(): string {
+  return readText(KEY_REFRESH_TOKEN);
+}
+
+export function isLogged(): boolean {
+  return accessToken().length > 0;
+}
+
+export function merchantCode(): string {
+  return readText(KEY_MERCHANT_CODE);
+}
+
+export function nickname(): string {
+  return readText(KEY_NICKNAME);
+}
+
+export function saveTokens(access: string, refresh: string): void {
+  writeText(KEY_ACCESS_TOKEN, access);
+  writeText(KEY_REFRESH_TOKEN, refresh);
+}
+
+export function saveMerchantCode(code: string): void {
+  writeText(KEY_MERCHANT_CODE, code);
+}
+
+export function saveNickname(value: string): void {
+  writeText(KEY_NICKNAME, value);
+}
+
+/** 退出登录只清令牌，门店保留：换账号后还在同一家店继续点单更符合直觉。 */
+export function clearSession(): void {
+  writeText(KEY_ACCESS_TOKEN, "");
+  writeText(KEY_REFRESH_TOKEN, "");
+  writeText(KEY_NICKNAME, "");
+  uni.$emit("session-changed");
+}
+
+/** 未进店就没有任何业务接口可调用，页面进当前就先问一次。 */
+export function hasStore(): boolean {
+  return merchantCode().length > 0;
+}

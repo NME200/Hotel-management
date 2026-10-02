@@ -1,0 +1,70 @@
+// 设计令牌：点餐小程序UI设计规范.md 第二到第六章的机器可读版本。
+// 页面样式里优先用这些常量（动态色、内联 style 尤其必须用常量），
+// 目的是让「改一处令牌」能覆盖全站，而不是在 30 个 .uvue 里搜硬编码色值。
+
+/* 主色 */
+export const PRIMARY = "#3FBF7F";
+export const PRIMARY_DARK = "#2FA268";
+export const PRIMARY_LIGHT = "#E8F7EF";
+export const PRIMARY_BG = "#F3FBF6";
+export const GRADIENT_FROM = "#5FD49B";
+export const GRADIENT_TO = "#35B17A";
+
+/* 中性色 */
+export const TEXT_MAIN = "#1A1A1A";
+export const TEXT_SUB = "#5C5C5C";
+export const TEXT_WEAK = "#9A9A9A";
+export const TEXT_DISABLED = "#C4C4C4";
+export const DIVIDER = "#EFEFEF";
+export const PAGE_BG = "#F7F8F7";
+export const CARD_BG = "#FFFFFF";
+export const UNSELECTED_BG = "#F2F3F2";
+
+/* 功能色 */
+export const PRICE_RED = "#FF5A3C";
+export const BADGE_RED = "#F5483B";
+export const WARN_YELLOW = "#FFB020";
+
+// 字号用 rpx：设计稿基准宽 375pt，小程序里 750rpx = 屏宽，所以 1pt = 2rpx。
+// 规范里的 20pt 标题在这里就是 40rpx，逐条对应，不做四舍五入以外的调整。
+export const FONT_H1 = 40;
+export const FONT_H2 = 34;
+export const FONT_H3 = 30;
+export const FONT_BODY = 28;
+export const FONT_CAPTION = 24;
+export const FONT_SMALL = 20;
+export const FONT_PRICE = 36;
+export const FONT_PRICE_LG = 48;
+
+/* 圆角（rpx，同样是 pt 的两倍） */
+export const RADIUS_CARD = 32;
+export const RADIUS_MEMBER_CARD = 40;
+export const RADIUS_BUTTON_LG = 48;
+export const RADIUS_BUTTON_SM = 32;
+export const RADIUS_TAG = 24;
+export const RADIUS_THUMB = 20;
+export const RADIUS_SHEET = 40;
+export const RADIUS_SEARCH = 40;
+
+/* 间距：基础单位 4pt = 8rpx */
+export const SPACE_1 = 8;
+export const SPACE_2 = 16;
+export const SPACE_3 = 24;
+export const SPACE_4 = 32;
+export const SPACE_5 = 40;
+export const SPACE_6 = 48;
+
+/** 页面左右安全边距，规范固定 16pt。 */
+export const PAGE_PADDING = 32;
+/** 底部悬浮购物车栏 56pt + 安全区，页面据此给内容留白，避免最后一行被压住。 */
+export const CART_BAR_HEIGHT = 112;
+export const TAB_BAR_HEIGHT = 100;
+
+/* 投影：规范只允许一层。渐变卡片不加投影，所以会员卡用不到这两个常量。 */
+export const SHADOW_CARD = "0 4rpx 16rpx rgba(0, 0, 0, 0.04)";
+export const SHADOW_FLOAT_BAR = "0 -4rpx 24rpx rgba(0, 0, 0, 0.06)";
+
+/** 规范要求的线性图标描边宽度（pt），图标尺寸 24pt。 */
+export const ICON_STROKE = 3;
+export const ICON_SIZE = 48;
+export const CATEGORY_ICON_SIZE = 96;

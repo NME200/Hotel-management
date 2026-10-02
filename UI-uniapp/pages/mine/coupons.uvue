@@ -1,0 +1,751 @@
+<template>
+  <view class="page">
+    <!-- 未登录不能白屏：给登录入口，机器码状态列表等登录后再拉 -->
+    <view v-if="!logged" class="empty">
+      <text class="empty-title">登录后即可查看优惠券</text>
+      <text class="empty-desc">券按微信账号发放，领取、核销都会记录在会员上</text>
+      <view class="empty-btn" @click="tapLogin"><text class="empty-btn-text">点击登录</text></view>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 领券中心：展开后是横向可领券列表，给「未使用」提供真实增长来源 -->
+      <view class="claim-head" @click="toggleClaim">
+        <text class="claim-title">领券中心</text>
+        <text class="claim-sub">{{ claimSubText() }}</text>
+        <text class="claim-arrow">{{ claimOpen ? '收起' : '展开' }}</text>
+      </view>
+
+      <view v-if="claimOpen" class="claim-area">
+        <text v-if="claimLoading" class="claim-loading">加载中…</text>
+        <text v-else-if="claimables.length == 0" class="claim-loading">这家店暂时没有可领的券</text>
+        <scroll-view v-else class="claim-scroll" direction="horizontal" :show-scrollbar="false">
+          <view class="claim-row">
+            <view v-for="item in claimables" :key="item.templateId" class="claim-card">
+              <text class="claim-face">{{ item.faceText }}</text>
+              <text class="claim-threshold">{{ item.thresholdText }}</text>
+              <text class="claim-name">{{ item.name }}</text>
+              <text class="claim-remaining">{{ remainingText(item) }}</text>
+              <view :class="item.claimable ? 'claim-btn' : 'claim-btn claim-btn-off'" @click="tapClaim(item)">
+                <text :class="item.claimable ? 'claim-btn-text' : 'claim-btn-text-off'">{{ claimBtnText(item) }}</text>
+              </view>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+
+      <!-- 筛选标签：前三项是状态筛选，「兑换码」是动作入口不是筛选项 -->
+      <view class="tabs">
+        <view :class="active == 'unused' ? 'tab tab-on' : 'tab'" @click="pickStatus('unused')">
+          <text :class="active == 'unused' ? 'tab-text tab-text-on' : 'tab-text'">未使用</text>
+        </view>
+        <view :class="active == 'used' ? 'tab tab-on' : 'tab'" @click="pickStatus('used')">
+          <text :class="active == 'used' ? 'tab-text tab-text-on' : 'tab-text'">已使用</text>
+        </view>
+        <view :class="active == 'expired' ? 'tab tab-on' : 'tab'" @click="pickStatus('expired')">
+          <text :class="active == 'expired' ? 'tab-text tab-text-on' : 'tab-text'">已过期</text>
+        </view>
+        <view class="tab" @click="openSheet">
+          <text class="tab-text">兑换码</text>
+        </view>
+      </view>
+
+      <text v-if="loading" class="list-hint">加载中…</text>
+      <view v-else-if="coupons.length == 0" class="list-empty">
+        <text class="list-empty-text">{{ emptyText() }}</text>
+      </view>
+
+      <!-- 券形卡片：左 1/3 色块放面额，右侧白底放券名与说明 -->
+      <view v-for="coupon in coupons" :key="coupon.couponNo" class="coupon">
+        <view class="coupon-row">
+          <view :class="isExpired(coupon) ? 'face face-off' : 'face'">
+            <text :class="isExpired(coupon) ? 'face-text face-text-off' : 'face-text'">{{ coupon.faceText }}</text>
+            <text :class="isExpired(coupon) ? 'face-sub face-sub-off' : 'face-sub'">{{ coupon.thresholdText }}</text>
+          </view>
+          <view class="seam"></view>
+          <view class="coupon-main">
+            <view class="coupon-top">
+              <text :class="isExpired(coupon) ? 'coupon-name coupon-name-off' : 'coupon-name'">{{ coupon.name }}</text>
+              <text v-if="isExpired(coupon)" class="stamp">已过期</text>
+            </view>
+            <text :class="isExpired(coupon) ? 'coupon-desc coupon-desc-off' : 'coupon-desc'">{{ descText(coupon) }}</text>
+            <view class="coupon-foot">
+              <text :class="isExpired(coupon) ? 'coupon-valid coupon-valid-off' : 'coupon-valid'">{{ validText(coupon) }}</text>
+              <view v-if="!isExpired(coupon) && coupon.status == 'unused'" class="coupon-btn" @click="goUse">
+                <text class="coupon-btn-text">去使用</text>
+              </view>
+              <text v-else-if="coupon.status == 'used'" class="coupon-used">{{ usedText(coupon) }}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <!-- 兑换码 Bottom Sheet（规范 8.5） -->
+    <view v-if="sheetOpen" class="mask" @click="closeSheet">
+      <view class="sheet" @click.stop="noop">
+        <view class="sheet-head">
+          <text class="sheet-title">兑换优惠券</text>
+          <view class="sheet-close" @click="closeSheet"><text class="sheet-close-text">×</text></view>
+        </view>
+        <text class="sheet-desc">输入门店给的券码，兑换成功后会出现在「未使用」列表里</text>
+        <input class="sheet-input" v-model="redeemCode" placeholder="请输入兑换码" />
+        <view :class="busy ? 'sheet-btn sheet-btn-off' : 'sheet-btn'" @click="tapRedeem">
+          <text :class="busy ? 'sheet-btn-text sheet-btn-text-off' : 'sheet-btn-text'">{{ busy ? '兑换中…' : '确认兑换' }}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { ClaimableCoupon, Coupon } from '../../common/models.uts'
+  import { claimCoupon, fetchClaimableCoupons, fetchCoupons, login, redeemCoupon } from '../../common/api.uts'
+  import { isLogged } from '../../common/session.uts'
+  import { dateOnly } from '../../common/format.uts'
+  import { toast } from '../../common/request.uts'
+
+  const logged = ref(false)
+  // 机器码与后端 MemberCouponStatus 完全一致：unused / used / expired
+  const active = ref('unused')
+  const coupons = ref<Coupon[]>([] as Coupon[])
+  const loading = ref(false)
+
+  const claimOpen = ref(false)
+  const claimLoaded = ref(false)
+  const claimLoading = ref(false)
+  const claimables = ref<ClaimableCoupon[]>([] as ClaimableCoupon[])
+
+  const sheetOpen = ref(false)
+  const redeemCode = ref('')
+  const busy = ref(false)
+
+  function isExpired(coupon: Coupon) : boolean {
+    return coupon.status == 'expired'
+  }
+
+  function descText(coupon: Coupon) : string {
+    const desc = coupon.description
+    if (desc == null) {
+      return coupon.scopeText
+    }
+    return desc!
+  }
+
+  function validText(coupon: Coupon) : string {
+    return coupon.validText
+  }
+
+  function usedText(coupon: Coupon) : string {
+    const at = coupon.usedAt
+    if (at == null) {
+      return '已使用'
+    }
+    return '使用于 ' + dateOnly(at!)
+  }
+
+  function emptyText() : string {
+    if (active.value == 'used') {
+      return '还没有使用过优惠券'
+    }
+    if (active.value == 'expired') {
+      return '没有已过期的优惠券'
+    }
+    return '还没有可用的优惠券，去领券中心看看'
+  }
+
+  function remainingText(item: ClaimableCoupon) : string {
+    // -1 是后端的「不限量」约定
+    return item.remaining < 0 ? '不限量发放' : '剩 ' + item.remaining + ' 张'
+  }
+
+  function claimBtnText(item: ClaimableCoupon) : string {
+    if (item.claimable) {
+      return '立即领取'
+    }
+    const tip = item.claimTip
+    if (tip == null) {
+      return '暂不可领'
+    }
+    return tip!
+  }
+
+  function claimSubText() : string {
+    if (!claimLoaded.value) {
+      return '领取后在「未使用」里查看'
+    }
+    const count = claimables.value.length
+    return count == 0 ? '暂无可领取的券' : '有 ' + count + ' 张券可领'
+  }
+
+  async function load() : Promise<void> {
+    logged.value = isLogged()
+    if (!logged.value) {
+      coupons.value = [] as Coupon[]
+      return
+    }
+    loading.value = true
+    coupons.value = await fetchCoupons(active.value)
+    loading.value = false
+  }
+
+  function pickStatus(status: string) : void {
+    if (active.value == status) {
+      return
+    }
+    active.value = status
+    load()
+  }
+
+  function toggleClaim() : void {
+    claimOpen.value = !claimOpen.value
+    if (claimOpen.value && !claimLoaded.value) {
+      loadClaimables()
+    }
+  }
+
+  async function loadClaimables() : Promise<void> {
+    claimLoading.value = true
+    claimables.value = await fetchClaimableCoupons()
+    claimLoaded.value = true
+    claimLoading.value = false
+  }
+
+  function tapClaim(item: ClaimableCoupon) : void {
+    doClaim(item)
+  }
+
+  async function doClaim(item: ClaimableCoupon) : Promise<void> {
+    if (!item.claimable) {
+      const tip = item.claimTip
+      toast(tip == null ? '这张券暂时领不了' : tip!)
+      return
+    }
+    const result = await claimCoupon(item.templateId)
+    if (result.code != 0) {
+      toast(result.message)
+      return
+    }
+    toast(result.message.length > 0 ? result.message : '领取成功')
+    await loadClaimables()
+    active.value = 'unused'
+    await load()
+  }
+
+  function openSheet() : void {
+    sheetOpen.value = true
+  }
+
+  function closeSheet() : void {
+    sheetOpen.value = false
+    busy.value = false
+  }
+
+  function noop() : void {}
+
+  function tapRedeem() : void {
+    doRedeem()
+  }
+
+  async function doRedeem() : Promise<void> {
+    if (busy.value) {
+      return
+    }
+    const code = redeemCode.value.trim()
+    if (code.length == 0) {
+      toast('请输入兑换码')
+      return
+    }
+    busy.value = true
+    const result = await redeemCoupon(code)
+    busy.value = false
+    if (result.code != 0) {
+      // 失败原因后端已经写好话术，前端不改写
+      toast(result.message)
+      return
+    }
+    toast(result.message.length > 0 ? result.message : '兑换成功')
+    redeemCode.value = ''
+    sheetOpen.value = false
+    active.value = 'unused'
+    await load()
+  }
+
+  function goUse() : void {
+    uni.switchTab({ url: '/pages/menu/menu' })
+  }
+
+  function tapLogin() : void {
+    doLogin()
+  }
+
+  async function doLogin() : Promise<void> {
+    const result = await login('', '')
+    if (result.code != 0) {
+      toast(result.message)
+      return
+    }
+    await load()
+    toast('登录成功')
+  }
+
+  onShow(() => {
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+    padding-top: $space-3;
+  }
+
+  /* 领券中心入口 */
+  .claim-head {
+    flex-direction: row;
+    align-items: center;
+    height: 88rpx;
+  }
+
+  .claim-title {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .claim-sub {
+    flex: 1;
+    margin-left: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .claim-arrow {
+    font-size: $font-caption;
+    color: $brand;
+    padding-left: $space-2;
+    padding-right: $space-1;
+  }
+
+  .claim-area {
+    margin-bottom: $space-3;
+  }
+
+  .claim-loading {
+    font-size: $font-caption;
+    color: $text-3;
+    padding-bottom: $space-2;
+  }
+
+  .claim-scroll {
+    width: 100%;
+    height: 380rpx;
+  }
+
+  .claim-row {
+    flex-direction: row;
+  }
+
+  .claim-card {
+    width: 300rpx;
+    margin-right: $space-2;
+    padding: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .claim-face {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .claim-threshold {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-2;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .claim-name {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-1;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .claim-remaining {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .claim-btn {
+    margin-top: $space-2;
+    height: 56rpx;
+    border-radius: $radius-btn-sm;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .claim-btn-off {
+    background-color: $divider;
+  }
+
+  .claim-btn-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .claim-btn-text-off {
+    font-size: $font-caption;
+    color: $text-4;
+  }
+
+  /* 筛选标签 */
+  .tabs {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: $space-3;
+  }
+
+  .tab {
+    height: 64rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    margin-right: $space-2;
+    background-color: $chip-bg;
+    border-radius: $radius-tag;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .tab-on {
+    background-color: $brand;
+  }
+
+  .tab-text {
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  .tab-text-on {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .list-hint {
+    margin-top: $space-5;
+    text-align: center;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .list-empty {
+    padding: $space-6;
+    align-items: center;
+  }
+
+  .list-empty-text {
+    font-size: $font-caption;
+    color: $text-3;
+    text-align: center;
+  }
+
+  /* 券形卡片：白底 + 圆角 16pt + 一层柔和投影，券间留 $space-3 */
+  .coupon {
+    position: relative;
+    margin-bottom: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .coupon-row {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .face {
+    width: 220rpx;
+    padding-top: $space-4;
+    padding-bottom: $space-4;
+    padding-left: $space-2;
+    padding-right: $space-2;
+    background-color: $brand-light;
+    border-top-left-radius: $radius-card;
+    border-bottom-left-radius: $radius-card;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .face-off {
+    background-color: $chip-bg;
+  }
+
+  .face-text {
+    font-size: $font-price-lg;
+    font-weight: $semibold;
+    color: $brand;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .face-text-off {
+    color: $text-4;
+  }
+
+  .face-sub {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $brand-dark;
+    lines: 1;
+    text-overflow: ellipsis;
+    text-align: center;
+  }
+
+  .face-sub-off {
+    color: $text-3;
+  }
+
+  /* 咬合分割：色块与白底交界处的 1px 虚线（uvue 无 CSS grid / 渐变遮罩，用边框实现） */
+  .seam {
+    width: 1px;
+    align-self: stretch;
+    border-left: 1px dashed $divider;
+  }
+
+  .coupon-main {
+    flex: 1;
+    padding: $space-3;
+  }
+
+  .coupon-top {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .coupon-name {
+    flex: 1;
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-name-off {
+    color: $text-3;
+  }
+
+  .stamp {
+    margin-left: $space-2;
+    padding-left: $space-1;
+    padding-right: $space-1;
+    height: 40rpx;
+    background-color: $chip-bg;
+    border-radius: $radius-tag;
+    font-size: $font-small;
+    color: $text-4;
+    text-align: center;
+  }
+
+  .coupon-desc {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-desc-off {
+    color: $text-4;
+  }
+
+  .coupon-foot {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .coupon-valid {
+    flex: 1;
+    font-size: $font-small;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-valid-off {
+    color: $text-4;
+  }
+
+  .coupon-btn {
+    height: 56rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    border: 1.5px solid $brand;
+    border-radius: $radius-btn-sm;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .coupon-btn-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .coupon-used {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  /* 兑换码 Bottom Sheet */
+  .mask {
+    position: fixed;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.45);
+    justify-content: flex-end;
+  }
+
+  .sheet {
+    padding: $space-4;
+    @include safe-bottom($space-4);
+    background-color: $card-bg;
+    border-top-left-radius: $radius-sheet;
+    border-top-right-radius: $radius-sheet;
+  }
+
+  .sheet-head {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .sheet-title {
+    flex: 1;
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .sheet-close {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: rgba(0, 0, 0, 0.06);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-close-text {
+    font-size: 36rpx;
+    color: $text-2;
+    line-height: 36rpx;
+  }
+
+  .sheet-desc {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .sheet-input {
+    margin-top: $space-4;
+    height: 88rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: $chip-bg;
+    border-radius: $radius-card;
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .sheet-btn {
+    margin-top: $space-4;
+    height: 88rpx;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-btn-off {
+    background-color: $divider;
+  }
+
+  .sheet-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .sheet-btn-text-off {
+    color: $text-4;
+  }
+
+  /* 未登录 */
+  .empty {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .bottom-space {
+    @include safe-height(96rpx);
+  }
+</style>

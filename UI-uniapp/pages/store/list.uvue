@@ -1,0 +1,323 @@
+<template>
+  <view class="page">
+    <!-- 当前门店 + 换店提示（cart.uts 的存储 key 就是按商户编号分的，这句是事实） -->
+    <view class="cur">
+      <view class="cur-left">
+        <text class="cur-label">当前已选门店</text>
+        <text class="cur-code">{{ currentText }}</text>
+      </view>
+      <text class="cur-tip">换店后购物车按门店分开保存</text>
+    </view>
+
+    <view class="head">
+      <view class="search">
+        <text class="search-icon">⌕</text>
+        <input
+          class="search-input"
+          :value="keyword"
+          placeholder="搜索门店名或地址"
+          placeholder-class="search-ph"
+          confirm-type="search"
+          @input="onInput"
+          @confirm="doSearch"
+        />
+        <view v-if="keyword.length > 0" class="search-clear" @click="clearKeyword"><text class="search-clear-text">×</text></view>
+      </view>
+      <view class="search-go" @click="doSearch"><text class="search-go-text">搜索</text></view>
+    </view>
+
+    <scroll-view class="scroll" direction="vertical" :show-scrollbar="false">
+      <view v-if="loading" class="state">
+        <text class="state-text">门店加载中…</text>
+      </view>
+      <view v-else-if="stores.length == 0" class="state">
+        <text class="state-text">{{ keywordEmpty ? '暂时没有找到可用的门店' : '没有找到相关门店，换个词试试' }}</text>
+      </view>
+
+      <view v-else class="list">
+        <view v-for="store in stores" :key="store.merchantCode" class="row" @click="choose(store)">
+          <view class="row-main">
+            <text class="row-name">{{ store.name }}</text>
+            <text class="row-addr">{{ addressText(store) }}</text>
+            <text class="row-hours">{{ hoursText(store.businessHours) }}</text>
+          </view>
+          <view :class="store.openNow ? 'row-status status-on' : 'row-status status-off'">
+            <text :class="store.openNow ? 'row-status-text-on' : 'row-status-text-off'">{{ store.openNow ? '营业中' : '休息中' }}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { merchantCode, saveMerchantCode } from '../../common/session.uts'
+  import { fetchStores } from '../../common/api.uts'
+  import { StoreContext } from '../../common/models.uts'
+  import { hoursText } from '../../common/format.uts'
+
+  const stores = ref<StoreContext[]>([] as StoreContext[])
+  const keyword = ref('')
+  const loading = ref(true)
+  const currentCode = ref('')
+
+  const currentText = computed(() : string => {
+    const code = currentCode.value
+    if (code.length == 0) {
+      return '还没选过门店'
+    }
+    // 顾客记不住 M10001 这种编号，能在列表里查到店名就显示店名，查不到才退回编号。
+    for (let i = 0; i < stores.value.length; i++) {
+      if (stores.value[i].merchantCode == code) {
+        return stores.value[i].name
+      }
+    }
+    return code
+  })
+  const keywordEmpty = computed(() : boolean => keyword.value.trim().length == 0)
+
+  /** 市 + 区 + 详细地址拼一行，三个字段都可空，全空时给一句人话而不是留白。 */
+  function addressText(store: StoreContext) : string {
+    const city = store.city == null ? '' : store.city!
+    const district = store.district == null ? '' : store.district!
+    const address = store.address == null ? '' : store.address!
+    const text = city + district + address
+    return text.length == 0 ? '地址待补充' : text
+  }
+
+  function onInput(event: UniInputEvent) : void {
+    keyword.value = event.detail.value
+    if (keyword.value.trim().length == 0) {
+      load()
+    }
+  }
+
+  function doSearch() : void {
+    load()
+  }
+
+  function clearKeyword() : void {
+    keyword.value = ''
+    load()
+  }
+
+  async function load() : Promise<void> {
+    loading.value = true
+    stores.value = await fetchStores(1, 50, keyword.value.trim())
+    loading.value = false
+  }
+
+  /** 换店只写商户编号：购物车按 dc_cart_<merchantCode> 分仓，不会串店。 */
+  function choose(store: StoreContext) : void {
+    saveMerchantCode(store.merchantCode)
+    uni.reLaunch({ url: '/pages/index/index' })
+  }
+
+  onShow(() => {
+    currentCode.value = merchantCode()
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  /* 当前门店提示条 */
+  .cur {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: $space-3 $page-padding $space-3 $page-padding;
+    background-color: $brand-light;
+  }
+
+  .cur-left {
+    flex: 1;
+    margin-right: $space-3;
+  }
+
+  .cur-label {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .cur-code {
+    margin-top: $space-1;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .cur-tip {
+    font-size: $font-caption;
+    color: $brand;
+    text-align: right;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  /* 搜索行 */
+  .head {
+    flex-direction: row;
+    align-items: center;
+    padding: $space-3 $page-padding $space-3 $page-padding;
+    background-color: $card-bg;
+    border-bottom: 1px solid $divider;
+  }
+
+  .search {
+    flex: 1;
+    flex-direction: row;
+    align-items: center;
+    height: 88rpx;
+    padding-left: $space-3;
+    padding-right: $space-2;
+    background-color: $brand-bg;
+    border-radius: $radius-search;
+  }
+
+  .search-icon {
+    font-size: 32rpx;
+    color: $text-3;
+    margin-right: $space-1;
+  }
+
+  .search-input {
+    flex: 1;
+    height: 88rpx;
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .search-ph {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  .search-clear {
+    width: 88rpx;
+    height: 88rpx;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .search-clear-text {
+    font-size: 40rpx;
+    color: $text-3;
+    line-height: 40rpx;
+  }
+
+  .search-go {
+    width: 128rpx;
+    height: 88rpx;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .search-go-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .scroll {
+    flex: 1;
+  }
+
+  /* 门店列表 */
+  .list {
+    background-color: $card-bg;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+  }
+
+  .row {
+    flex-direction: row;
+    align-items: center;
+    min-height: $list-item-height;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .row-main {
+    flex: 1;
+  }
+
+  .row-name {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .row-addr {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .row-hours {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .row-status {
+    margin-left: $space-3;
+    height: 48rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    border-radius: $radius-tag;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* 营业中用规范 8.6 的进行中标签，休息中用灰调 */
+  .status-on {
+    background-color: $brand-light;
+  }
+
+  .status-off {
+    background-color: $chip-bg;
+  }
+
+  .row-status-text-on {
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  .row-status-text-off {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 提示态 */
+  .state {
+    padding: $space-6;
+    align-items: center;
+  }
+
+  .state-text {
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .bottom-space {
+    height: 80rpx;
+  }
+</style>

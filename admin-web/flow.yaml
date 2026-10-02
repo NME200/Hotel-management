@@ -1,0 +1,193 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - menubar [ref=f1e5]:
+      - menuitem "平台看板" [ref=f1e6] [cursor=pointer]
+      - menuitem "商户管理" [ref=f1e11] [cursor=pointer]
+      - menuitem "到期预警" [ref=f1e16] [cursor=pointer]
+      - menuitem "支付管理" [expanded] [ref=f1e22]:
+        - menu [ref=f1e33]:
+          - menuitem "商户支付" [ref=f1e34] [cursor=pointer]
+          - menuitem "支付流水" [ref=f1e41] [cursor=pointer]
+      - menuitem "操作审计" [ref=f1e48] [cursor=pointer]
+    - paragraph [ref=f1e53]: SaaS 多商户点餐系统
+  - generic [ref=f1e54]:
+    - banner [ref=f1e55]:
+      - generic [ref=f1e56]:
+        - button [ref=f1e57] [cursor=pointer]
+        - navigation "面包屑" [ref=f1e62]:
+          - link "支付流水" [ref=f1e64]
+      - generic [ref=f1e65]:
+        - generic [ref=f1e66]: 运营专员
+        - button "平台运营" [ref=f1e69] [cursor=pointer]
+    - main [ref=f1e77]:
+      - generic [ref=f1e78]:
+        - generic [ref=f1e79]:
+          - generic [ref=f1e89]:
+            - paragraph [ref=f1e90]: 今日交易额
+            - paragraph [ref=f1e91]: ¥276.00
+            - paragraph [ref=f1e92]: 今日 3 笔
+          - generic [ref=f1e101]:
+            - paragraph [ref=f1e102]: 累计交易额
+            - paragraph [ref=f1e103]: ¥276.00
+            - paragraph [ref=f1e104]: 成功 3 笔
+          - generic [ref=f1e113]:
+            - paragraph [ref=f1e114]: 累计退款额
+            - paragraph [ref=f1e115]: ¥1.00
+            - paragraph [ref=f1e116]: 退款 1 笔（不冲抵交易额）
+          - generic [ref=f1e124]:
+            - paragraph [ref=f1e125]: 未完成
+            - paragraph [ref=f1e126]: "1"
+            - paragraph [ref=f1e127]: created / paying，超时将自动关单
+          - generic [ref=f1e135]:
+            - paragraph [ref=f1e136]: 异常
+            - paragraph [ref=f1e137]: "0"
+            - paragraph [ref=f1e138]: 关单 0 · 失败 0
+        - generic [ref=f1e139]:
+          - generic [ref=f1e140]:
+            - generic [ref=f1e141]:
+              - textbox "商户名称 / 商户编号 / 支付单号 / 渠道交易号" [ref=f1e149]
+              - textbox "订单号（精确匹配）" [ref=f1e154]
+              - generic [ref=f1e158] [cursor=pointer]:
+                - generic:
+                  - combobox [ref=f1e160]
+                  - generic [ref=f1e161]: 全部渠道
+              - generic [ref=f1e168] [cursor=pointer]:
+                - generic:
+                  - combobox [ref=f1e170]
+                  - generic [ref=f1e171]: 全部状态
+              - generic [ref=f1e177]:
+                - combobox "开始日期" [ref=f1e181]
+                - generic [ref=f1e182]: 至
+                - combobox "结束日期" [ref=f1e183]
+              - button "查询" [ref=f1e185] [cursor=pointer]
+              - button "重置" [ref=f1e188] [cursor=pointer]
+            - button "刷新" [ref=f1e190] [cursor=pointer]
+          - generic [ref=f1e196]:
+            - tablist [ref=f1e200]:
+              - tab "支付流水" [selected] [ref=f1e202]
+              - tab "退款流水" [ref=f1e209]
+            - tabpanel "支付流水" [ref=f1e216]:
+              - generic [ref=f1e218]:
+                - table [ref=f1e220]:
+                  - rowgroup [ref=f1e231]:
+                    - row [ref=f1e232]:
+                      - columnheader [ref=f1e233]
+                      - columnheader "商户" [ref=f1e234]
+                      - columnheader "支付单号 / 订单号" [ref=f1e236]
+                      - columnheader "渠道" [ref=f1e238]
+                      - columnheader "金额" [ref=f1e240]
+                      - columnheader "状态" [ref=f1e242]
+                      - columnheader "分账" [ref=f1e244]
+                      - columnheader "渠道交易号" [ref=f1e246]
+                      - columnheader "支付时间" [ref=f1e248]
+                - table [ref=f1e254]:
+                  - rowgroup [ref=f1e265]:
+                    - row [ref=f1e266]:
+                      - cell [ref=f1e267]:
+                        - button "展开当前行" [ref=f1e269] [cursor=pointer]
+                      - cell "川味小馆（演示商户） M10001" [ref=f1e273]:
+                        - generic [ref=f1e275]:
+                          - generic [ref=f1e276]: 川味小馆（演示商户）
+                          - paragraph [ref=f1e277]: M10001
+                      - cell "P261002003228727075 260929103100379490" [ref=f1e278]:
+                        - generic [ref=f1e280]:
+                          - generic [ref=f1e281]: P261002003228727075
+                          - paragraph [ref=f1e282]: "260929103100379490"
+                      - cell "模拟支付 MOCKMCH10001" [ref=f1e283]:
+                        - generic [ref=f1e285]:
+                          - generic [ref=f1e286]: 模拟支付
+                          - paragraph [ref=f1e287]: MOCKMCH10001
+                      - cell "¥44.00" [ref=f1e288]
+                      - cell "支付中" [ref=f1e292]
+                      - cell "待分账" [ref=f1e296]
+                      - cell "未回执" [ref=f1e300]
+                      - cell "未支付 待支付，超时自动关单" [ref=f1e302]:
+                        - generic [ref=f1e304]:
+                          - generic [ref=f1e305]: 未支付
+                          - paragraph [ref=f1e306]: 待支付，超时自动关单
+                    - row [ref=f1e307]:
+                      - cell [ref=f1e308]:
+                        - button "展开当前行" [ref=f1e310] [cursor=pointer]
+                      - cell "川味小馆（演示商户） M10001" [ref=f1e314]:
+                        - generic [ref=f1e316]:
+                          - generic [ref=f1e317]: 川味小馆（演示商户）
+                          - paragraph [ref=f1e318]: M10001
+                      - cell "P261002003228396334 261001203400814768" [ref=f1e319]:
+                        - generic [ref=f1e321]:
+                          - generic [ref=f1e322]: P261002003228396334
+                          - paragraph [ref=f1e323]: "261001203400814768"
+                      - cell "模拟支付 MOCKMCH10001" [ref=f1e324]:
+                        - generic [ref=f1e326]:
+                          - generic [ref=f1e327]: 模拟支付
+                          - paragraph [ref=f1e328]: MOCKMCH10001
+                      - cell "¥116.00" [ref=f1e329]
+                      - cell "已成功" [ref=f1e333]
+                      - cell "待分账" [ref=f1e337]
+                      - cell "MOCK17908723484481cacbe" [ref=f1e341]
+                      - cell "2026-10-02 00:32:28 创建 2026-10-02 00:32:28" [ref=f1e343]:
+                        - generic [ref=f1e345]:
+                          - generic [ref=f1e346]: 2026-10-02 00:32:28
+                          - paragraph [ref=f1e347]: 创建 2026-10-02 00:32:28
+                    - row [ref=f1e348]:
+                      - cell [ref=f1e349]:
+                        - button "展开当前行" [ref=f1e351] [cursor=pointer]
+                      - cell "川味小馆（演示商户） M10001" [ref=f1e355]:
+                        - generic [ref=f1e357]:
+                          - generic [ref=f1e358]: 川味小馆（演示商户）
+                          - paragraph [ref=f1e359]: M10001
+                      - cell "P261002003228102723 260928112600141582" [ref=f1e360]:
+                        - generic [ref=f1e362]:
+                          - generic [ref=f1e363]: P261002003228102723
+                          - paragraph [ref=f1e364]: "260928112600141582"
+                      - cell "模拟支付 MOCKMCH10001" [ref=f1e365]:
+                        - generic [ref=f1e367]:
+                          - generic [ref=f1e368]: 模拟支付
+                          - paragraph [ref=f1e369]: MOCKMCH10001
+                      - cell "¥70.00" [ref=f1e370]
+                      - cell "已成功" [ref=f1e374]
+                      - cell "待分账" [ref=f1e378]
+                      - cell "MOCK17908723483435a13de" [ref=f1e382]
+                      - cell "2026-10-02 00:32:28 创建 2026-10-02 00:32:28" [ref=f1e384]:
+                        - generic [ref=f1e386]:
+                          - generic [ref=f1e387]: 2026-10-02 00:32:28
+                          - paragraph [ref=f1e388]: 创建 2026-10-02 00:32:28
+                    - row [ref=f1e389]:
+                      - cell [ref=f1e390]:
+                        - button "展开当前行" [ref=f1e392] [cursor=pointer]
+                      - cell "川味小馆（演示商户） M10001" [ref=f1e396]:
+                        - generic [ref=f1e398]:
+                          - generic [ref=f1e399]: 川味小馆（演示商户）
+                          - paragraph [ref=f1e400]: M10001
+                      - cell "P261002003228492585 261001191500789428" [ref=f1e401]:
+                        - generic [ref=f1e403]:
+                          - generic [ref=f1e404]: P261002003228492585
+                          - paragraph [ref=f1e405]: "261001191500789428"
+                      - cell "模拟支付 MOCKMCH10001" [ref=f1e406]:
+                        - generic [ref=f1e408]:
+                          - generic [ref=f1e409]: 模拟支付
+                          - paragraph [ref=f1e410]: MOCKMCH10001
+                      - cell "¥90.00 已退 ¥1.00" [ref=f1e411]:
+                        - generic [ref=f1e413]:
+                          - generic [ref=f1e414]: ¥90.00
+                          - paragraph [ref=f1e415]: 已退 ¥1.00
+                      - cell "已成功" [ref=f1e416]
+                      - cell "待分账" [ref=f1e420]
+                      - cell "MOCK17908723482347c4671" [ref=f1e424]
+                      - cell "2026-10-02 00:32:28 创建 2026-10-02 00:32:28" [ref=f1e426]:
+                        - generic [ref=f1e428]:
+                          - generic [ref=f1e429]: 2026-10-02 00:32:28
+                          - paragraph [ref=f1e430]: 创建 2026-10-02 00:32:28
+              - generic [ref=f1e433]:
+                - generic [ref=f1e434]: 共 4 条
+                - generic [ref=f1e437] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=f1e439]
+                    - generic [ref=f1e440]: 20条/页
+                - button "上一页" [disabled] [ref=f1e445]
+                - list [ref=f1e446]:
+                  - listitem "第 1 页" [ref=f1e447]: "1"
+                - button "下一页" [disabled] [ref=f1e448]
+                - generic [ref=f1e449]:
+                  - generic [ref=f1e450]: 前往
+                  - spinbutton "页" [ref=f1e453]: "1"
+                  - generic [ref=f1e454]: 页

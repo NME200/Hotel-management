@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+unpackage/
+
+# 本机验证环境：.e2e 里有真实微信访问令牌 token.txt、开发者工具自动化产物和大量截图
+.e2e/
+
+# 本地工具目录：.workbuddy-ai/memory 里明文记着本机 DB/Redis 口令，playwright 那几张是调试截图
+.workbuddy-ai/
+.playwright-cli/
+.pw-*.png
+playwright-cli.json
+
+# 会话过程记录（几万行对话日志，不是项目产物；本地保留，不入库）
+/创建商家端后端项目_*.md
+/继续完成任务_*.md
+
+# 备份与本地数据（仓库外目录，列在这里只为防止哪天被顺手挪进来）
+*.sql
+ye-dc-backup/
+
+# 日志与系统垃圾
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,78 @@
+// 顾客端价格预估，与后端「活动价与会员价取低」同一口径。
+//
+// 这段算法原先在首页/点餐页/详情页/搜索页各写了一份，再加一档活动价就会变成
+// 四份可能互相不一致的算法，所以收敛到这里。成交金额永远以后端返回为准，
+// 这里只负责加购前的展示与购物车预估。
+
+import { DishBrief } from "./models.uts";
+import { isLogged } from "./session.uts";
+import { amountText } from "./format.uts";
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** 活动立减额（元，按菜品基础价换算）。没有活动、或活动价不低于原价时为 0。 */
+export function promotionDiscount(dish: DishBrief): number {
+  const promo = dish.promotionPrice;
+  if (promo == null) {
+    return 0;
+  }
+  const delta = dish.price - promo!;
+  return delta > 0 ? round2(delta) : 0;
+}
+
+/** 卡片主价格：有活动显示活动价，否则原价。会员价不抢主价格，只走「会员省」提示。 */
+export function salePrice(dish: DishBrief): number {
+  const promo = dish.promotionPrice;
+  return promo == null ? dish.price : promo!;
+}
+
+/** 划线原价：只在真的比主价格低时才划，避免出现「原价 = 现价」的假折扣。 */
+export function originPrice(dish: DishBrief): number | null {
+  return promotionDiscount(dish) > 0 ? dish.price : null;
+}
+
+/** price 传选了规格与加料之后的行基础价；会员与活动都按立减额扣，取更便宜的一方。 */
+export function estimateUnitPrice(dish: DishBrief, price: number): number {
+  let best = price;
+  if (isLogged() && dish.memberDiscount > 0) {
+    best = Math.min(best, price - dish.memberDiscount);
+  }
+  const promo = promotionDiscount(dish);
+  if (promo > 0) {
+    best = Math.min(best, price - promo);
+  }
+  return Math.max(round2(best), 0);
+}
+
+/* ---------- 下面三个是渲染用的成品字符串：模板里不做判空和拼接 ---------- */
+
+/** 划线原价文本，没有活动时返回空串。 */
+export function originPriceText(dish: DishBrief): string {
+  const origin = originPrice(dish);
+  return origin == null ? "" : "¥" + amountText(origin!);
+}
+
+/** 活动角标，商家没填时后端已经兜成「活动」；无活动返回空串。 */
+export function promoTagText(dish: DishBrief): string {
+  if (promotionDiscount(dish) <= 0) {
+    return "";
+  }
+  const badge = dish.promotionBadge;
+  return badge == null ? "活动" : badge!;
+}
+
+/** 会员提示文本；活动价压过会员价时后端给 null，这里就是空串。 */
+export function memberTipText(dish: DishBrief): string {
+  if (!isLogged()) {
+    return "";
+  }
+  const tip = dish.memberTip;
+  return tip == null ? "" : tip!;
+}
+
+/** 主价格文本（含币符）。 */
+export function salePriceText(dish: DishBrief): string {
+  return "¥" + amountText(salePrice(dish));
+}

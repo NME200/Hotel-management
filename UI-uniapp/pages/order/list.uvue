@@ -1,0 +1,492 @@
+<template>
+  <view class="page">
+    <!-- 筛选标签：选中 $brand 字 + $brand-light 底胶囊（规范 9.9） -->
+    <view class="tabs">
+      <view :class="filterStatus == '' ? 'tab tab-on' : 'tab'" @click="pickFilter('')">
+        <text :class="filterStatus == '' ? 'tab-text-on' : 'tab-text'">全部</text>
+      </view>
+      <view :class="filterStatus == 'pending' ? 'tab tab-on' : 'tab'" @click="pickFilter('pending')">
+        <text :class="filterStatus == 'pending' ? 'tab-text-on' : 'tab-text'">进行中</text>
+      </view>
+      <view :class="filterStatus == 'ready' ? 'tab tab-on' : 'tab'" @click="pickFilter('ready')">
+        <text :class="filterStatus == 'ready' ? 'tab-text-on' : 'tab-text'">待取餐</text>
+      </view>
+      <view :class="filterStatus == 'completed' ? 'tab tab-on' : 'tab'" @click="pickFilter('completed')">
+        <text :class="filterStatus == 'completed' ? 'tab-text-on' : 'tab-text'">已完成</text>
+      </view>
+    </view>
+
+    <scroll-view
+      class="scroll"
+      direction="vertical"
+      :show-scrollbar="false"
+      :refresher-enabled="true"
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+    >
+      <view v-for="item in orders" :key="item.orderNo" class="order-card" @click="openTrace(item.orderNo)">
+        <view class="card-head">
+          <text class="order-no">{{ '订单号 ' + item.orderNo }}</text>
+          <view :class="tagClass(item)">
+            <view v-if="showDot(item)" class="tag-dot"></view>
+            <text :class="tagTextClass(item)">{{ item.statusLabel }}</text>
+          </view>
+        </view>
+        <text class="order-summary">{{ summaryOf(item) }}</text>
+        <text class="order-time">{{ timeOf(item) }}</text>
+        <view class="card-divider"></view>
+        <view class="card-foot">
+          <text class="order-pay">{{ '实付 ¥' + amountText(item.payAmount) }}</text>
+          <view class="foot-actions">
+            <view class="btn-ghost" @click.stop="openTrace(item.orderNo)"><text class="btn-ghost-text">查看进度</text></view>
+            <view :class="canReorder(item) ? 'btn-light' : 'btn-light btn-light-off'" @click.stop="onReorderTap(item)">
+              <text :class="canReorder(item) ? 'btn-light-text' : 'btn-light-text-off'">再来一单</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view v-if="loading && orders.length == 0" class="empty">
+        <text class="empty-desc">正在加载订单…</text>
+      </view>
+      <view v-else-if="!logged" class="empty">
+        <text class="empty-title">登录后即可查看订单</text>
+        <text class="empty-desc">微信一键登录，订单与优惠券都会对上你的会员账号</text>
+        <view class="empty-btn" @click="onLoginTap"><text class="empty-btn-text">微信登录</text></view>
+      </view>
+      <view v-else-if="orders.length == 0 && !loading" class="empty">
+        <text class="empty-title">还没有订单，去点餐页看看</text>
+        <text class="empty-desc">换个筛选标签也可以再看看历史单</text>
+        <view class="empty-btn" @click="goMenu"><text class="empty-btn-text">去点餐</text></view>
+      </view>
+
+      <view v-if="orders.length > 0 && !noMore" class="more" @click="onLoadMore">
+        <text class="more-text">{{ loading ? '加载中…' : '加载更多' }}</text>
+      </view>
+      <view v-if="orders.length > 0 && noMore" class="more-end">
+        <text class="more-end-text">没有更多订单了</text>
+      </view>
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { ensureLogin, fetchOrders } from '../../common/api.uts'
+  import { isLogged } from '../../common/session.uts'
+  import { OrderBrief } from '../../common/models.uts'
+  import { amountText, shortTime } from '../../common/format.uts'
+  import { toast } from '../../common/request.uts'
+
+  // 后端 pageSize 写死 10，返回不足 10 条就是最后一页
+  const PAGE_SIZE = 10
+
+  const orders = ref<OrderBrief[]>([] as OrderBrief[])
+  const filterStatus = ref('')
+  const pageNum = ref(1)
+  const loading = ref(false)
+  const refreshing = ref(false)
+  const noMore = ref(false)
+  const logged = ref(true)
+
+  /** 菜品摘要：前两项菜名 + 「等 N 件」，数量用后端的 itemCount。 */
+  function summaryOf(item: OrderBrief) : string {
+    const head = item.items.slice(0, 2).map((line) => line.dishName).join('、')
+    if (head.length == 0) {
+      return item.itemCount + ' 件菜品'
+    }
+    return item.items.length > 2 ? head + ' 等 ' + item.itemCount + ' 件' : head
+  }
+
+  function timeOf(item: OrderBrief) : string {
+    return shortTime(item.createdAt) + ' · ' + item.dineTypeLabel
+  }
+
+  /** 规范 8.6：进行中 = 绿字浅绿底；已完成 = 绿点 + 文字；失效 = 灰调。 */
+  function tagClass(item: OrderBrief) : string {
+    const status = item.status
+    if (status == 'completed') {
+      return 'tag tag-done'
+    }
+    if (status == 'cancelled' || status == 'refunded') {
+      return 'tag tag-off'
+    }
+    return 'tag tag-on'
+  }
+
+  function tagTextClass(item: OrderBrief) : string {
+    const status = item.status
+    if (status == 'cancelled' || status == 'refunded') {
+      return 'tag-text tag-text-off'
+    }
+    return 'tag-text tag-text-brand'
+  }
+
+  function showDot(item: OrderBrief) : boolean {
+    return item.status == 'completed'
+  }
+
+  /** 订单明细里没有购物车的规格分组 id，只有这三态才值得再点一次。 */
+  function canReorder(item: OrderBrief) : boolean {
+    const status = item.status
+    return status == 'accepted' || status == 'preparing' || status == 'ready'
+  }
+
+  async function loadOrders(reset: boolean) : Promise<void> {
+    if (loading.value) {
+      return
+    }
+    loading.value = true
+    const target = reset ? 1 : pageNum.value + 1
+    const list = await fetchOrders(filterStatus.value, target)
+    if (reset) {
+      orders.value = list
+    } else {
+      const merged = orders.value.slice()
+      for (let i = 0; i < list.length; i++) {
+        merged.push(list[i])
+      }
+      orders.value = merged
+    }
+    pageNum.value = target
+    noMore.value = list.length < PAGE_SIZE
+    loading.value = false
+    refreshing.value = false
+  }
+
+  function pickFilter(value: string) : void {
+    if (filterStatus.value == value) {
+      return
+    }
+    filterStatus.value = value
+    orders.value = [] as OrderBrief[]
+    noMore.value = false
+    loadOrders(true)
+  }
+
+  function onRefresh() : void {
+    if (!isLogged()) {
+      logged.value = false
+      return
+    }
+    refreshing.value = true
+    loadOrders(true)
+  }
+
+  function onLoadMore() : void {
+    if (noMore.value) {
+      return
+    }
+    loadOrders(false)
+  }
+
+  function openTrace(no: string) : void {
+    if (no.length == 0) {
+      return
+    }
+    uni.navigateTo({ url: '/pages/order/trace?orderNo=' + no })
+  }
+
+  function onReorderTap(item: OrderBrief) : void {
+    if (!canReorder(item)) {
+      toast('这笔订单还不能再来一单')
+      return
+    }
+    // 不做「自动加回购物车」：明细里的 skuId/加料组合与购物车分组 id 对不上，做不到就不承诺
+    toast('已跳到点餐页，请重新选择菜品与规格')
+    uni.switchTab({ url: '/pages/menu/menu' })
+  }
+
+  function goMenu() : void {
+    uni.switchTab({ url: '/pages/menu/menu' })
+  }
+
+  function onLoginTap() : void {
+    doLogin()
+  }
+
+  async function doLogin() : Promise<void> {
+    const ok = await ensureLogin()
+    if (!ok) {
+      return
+    }
+    logged.value = true
+    loadOrders(true)
+  }
+
+  onShow(() => {
+    logged.value = isLogged()
+    if (!logged.value) {
+      orders.value = [] as OrderBrief[]
+      noMore.value = false
+      return
+    }
+    loadOrders(true)
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  /* 筛选标签行 */
+  .tabs {
+    flex-direction: row;
+    align-items: center;
+    padding: $space-3 $page-padding;
+    background-color: $card-bg;
+  }
+
+  .tab {
+    height: 64rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    margin-right: $space-2;
+    border-radius: $radius-tag;
+    background-color: $chip-bg;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .tab-on {
+    background-color: $brand-light;
+  }
+
+  .tab-text {
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  .tab-text-on {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .scroll {
+    flex: 1;
+    padding: $space-3 $page-padding;
+  }
+
+  /* 订单卡 */
+  .order-card {
+    padding: $space-4;
+    margin-bottom: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .card-head {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .order-no {
+    flex: 1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .tag {
+    flex-direction: row;
+    align-items: center;
+    height: 40rpx;
+    padding-left: $space-2;
+    padding-right: $space-2;
+    margin-left: $space-2;
+    border-radius: $radius-tag;
+  }
+
+  .tag-on {
+    background-color: $brand-light;
+  }
+
+  /* 已完成用圆点 + 文字，不再叠底色 */
+  .tag-done {
+    background-color: transparent;
+  }
+
+  .tag-off {
+    background-color: $chip-bg;
+  }
+
+  .tag-dot {
+    width: 16rpx;
+    height: 16rpx;
+    margin-right: $space-1;
+    border-radius: 16rpx;
+    background-color: $brand;
+  }
+
+  .tag-text {
+    font-size: $font-caption;
+  }
+
+  .tag-text-brand {
+    color: $brand;
+  }
+
+  .tag-text-off {
+    color: $text-4;
+  }
+
+  .order-summary {
+    margin-top: $space-3;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .order-time {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .card-divider {
+    height: 1px;
+    margin-top: $space-3;
+    background-color: $divider;
+  }
+
+  .card-foot {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-3;
+  }
+
+  .order-pay {
+    flex: 1;
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .foot-actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  /* 列表页没有单一主转化动作，两个按钮都不做主色实心（规范 2.4：一屏最多 1 个） */
+  .btn-ghost {
+    height: 64rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    border: 3rpx solid $brand;
+    border-radius: $radius-btn-lg;
+    background-color: #FFFFFF;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .btn-ghost-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .btn-light {
+    height: 64rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    margin-left: $space-2;
+    border-radius: $radius-btn-lg;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .btn-light-off {
+    background-color: $chip-bg;
+  }
+
+  .btn-light-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .btn-light-text-off {
+    font-size: $font-caption;
+    color: $text-4;
+  }
+
+  /* 分页 */
+  .more {
+    height: 80rpx;
+    margin-bottom: $space-3;
+    border-radius: $radius-btn-lg;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .more-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .more-end {
+    padding: $space-3;
+    align-items: center;
+  }
+
+  .more-end-text {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .bottom-space {
+    height: $space-6;
+  }
+
+  /* 空状态 */
+  .empty {
+    padding: $space-6;
+    align-items: center;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+    text-align: center;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: 88rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+</style>

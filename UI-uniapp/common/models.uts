@@ -1,0 +1,732 @@
+// 接口模型：字段与 Api-Serve 的顾客端视图一一对应，金额单位是「元」(number)。
+//
+// 为什么在小程序里再解析一遍而不是直接把 UTSJSONObject 丢给模板：
+// 模板里 item.getString("name") 这种写法会把视图层和数据层黏在一起，
+// 字段改名要翻遍所有页面；这里集中做一次转换，页面只认类型。
+// 所有可空字段都归一成 null（不是 undefined），模板判空只需 `x != null`。
+
+import { str, optStr, num, optNum, boolv, objArray, strArray, numArray, child } from "./json.uts";
+
+/* ------------------------------ 门店 ------------------------------ */
+
+export type StoreContext = {
+  merchantCode: string;
+  merchantName: string;
+  name: string;
+  logo: string | null;
+  city: string | null;
+  district: string | null;
+  address: string | null;
+  phone: string | null;
+  notice: string | null;
+  businessHours: string[];
+  status: string;
+  openNow: boolean;
+};
+
+export function parseStore(o: UTSJSONObject): StoreContext {
+  return {
+    merchantCode: str(o, "merchantCode"),
+    merchantName: str(o, "merchantName"),
+    name: str(o, "name"),
+    logo: optStr(o, "logo"),
+    city: optStr(o, "city"),
+    district: optStr(o, "district"),
+    address: optStr(o, "address"),
+    phone: optStr(o, "phone"),
+    notice: optStr(o, "notice"),
+    businessHours: strArray(o, "businessHours"),
+    status: str(o, "status"),
+    openNow: boolv(o, "openNow"),
+  };
+}
+
+export function parseStoreList(o: UTSJSONObject | null): StoreContext[] {
+  if (o == null) {
+    return [] as StoreContext[];
+  }
+  return objArray(o, "list").map((item) => parseStore(item));
+}
+
+/* ------------------------------ 菜品 ------------------------------ */
+
+export type DishBrief = {
+  id: number;
+  categoryId: number;
+  name: string;
+  subtitle: string | null;
+  image: string | null;
+  price: number;
+  memberPrice: number | null;
+  /** 会员立减额：选了大份也减这个数，所以卡片上能直接标「会员省 ¥6」 */
+  memberDiscount: number;
+  /** 会员提示文案，后端算好；活动价压过会员价时为 null，不给不会发生的承诺 */
+  memberTip: string | null;
+  /** 限时活动：promotionPrice 是当下这一桌人能看到的活动价 */
+  promotionId: number;
+  promotionBadge: string | null;
+  promotionPrice: number | null;
+  unit: string;
+  tags: string[];
+  salesCount: number;
+  stock: number | null;
+  soldOut: boolean;
+  isRecommend: boolean;
+  /** true 表示必须先选规格/加料，列表右侧要点开弹窗而不是直接 +1 */
+  needChoose: boolean;
+};
+
+export function parseDish(o: UTSJSONObject): DishBrief {
+  return {
+    id: num(o, "id"),
+    categoryId: num(o, "categoryId"),
+    name: str(o, "name"),
+    subtitle: optStr(o, "subtitle"),
+    image: optStr(o, "image"),
+    price: num(o, "price"),
+    memberPrice: optNum(o, "memberPrice"),
+    memberDiscount: num(o, "memberDiscount"),
+    memberTip: optStr(o, "memberTip"),
+    promotionId: num(o, "promotionId"),
+    promotionBadge: optStr(o, "promotionBadge"),
+    promotionPrice: optNum(o, "promotionPrice"),
+    unit: str(o, "unit"),
+    tags: strArray(o, "tags"),
+    salesCount: num(o, "salesCount"),
+    stock: optNum(o, "stock"),
+    soldOut: boolv(o, "soldOut"),
+    isRecommend: boolv(o, "isRecommend"),
+    needChoose: boolv(o, "needChoose"),
+  };
+}
+
+export type SkuOption = { name: string; priceDelta: number };
+
+export type Sku = {
+  id: number;
+  name: string;
+  price: number;
+  specDesc: string | null;
+  soldOut: boolean;
+  priceDelta: number;
+};
+
+export function parseSku(o: UTSJSONObject): Sku {
+  return {
+    id: num(o, "id"),
+    name: str(o, "name"),
+    price: num(o, "price"),
+    specDesc: optStr(o, "specDesc"),
+    soldOut: boolv(o, "soldOut"),
+    priceDelta: num(o, "priceDelta"),
+  };
+}
+
+export type OptionGroup = {
+  id: number;
+  name: string;
+  /** single 单选 / multi 多选 */
+  type: string;
+  required: boolean;
+  options: SkuOption[];
+};
+
+export function parseOptionGroup(o: UTSJSONObject): OptionGroup {
+  const options = objArray(o, "options").map((item) => {
+    const option: SkuOption = { name: str(item, "name"), priceDelta: num(item, "priceDelta") };
+    return option;
+  });
+  return {
+    id: num(o, "id"),
+    name: str(o, "name"),
+    type: str(o, "type"),
+    required: boolv(o, "required"),
+    options: options,
+  };
+}
+
+export type DishDetail = {
+  dish: DishBrief;
+  description: string | null;
+  skus: Sku[];
+  optionGroups: OptionGroup[];
+  related: DishBrief[];
+};
+
+export function parseDishDetail(o: UTSJSONObject): DishDetail {
+  return {
+    dish: parseDish(o),
+    description: optStr(o, "description"),
+    skus: objArray(o, "skus").map((item) => parseSku(item)),
+    optionGroups: objArray(o, "optionGroups").map((item) => parseOptionGroup(item)),
+    related: objArray(o, "related").map((item) => parseDish(item)),
+  };
+}
+
+export type MenuCategory = { id: number; name: string; icon: string | null; dishes: DishBrief[] };
+
+export function parseMenu(o: UTSJSONObject | null): MenuCategory[] {
+  if (o == null) {
+    return [] as MenuCategory[];
+  }
+  return objArray(o, "categories").map((item) => {
+    const category: MenuCategory = {
+      id: num(item, "id"),
+      name: str(item, "name"),
+      icon: optStr(item, "icon"),
+      dishes: objArray(item, "dishes").map((dish) => parseDish(dish)),
+    };
+    return category;
+  });
+}
+
+/** 今日推荐 / 搜索结果：data 直接是菜品数组。 */
+export function parseDishArray(o: UTSJSONObject | null): DishBrief[] {
+  if (o == null) {
+    return [] as DishBrief[];
+  }
+  return couponArray(o).map((item) => parseDish(item));
+}
+
+/* ------------------------------ 会员 ------------------------------ */
+
+export type NextLevel = { level: string; label: string; threshold: number; remaining: number };
+
+export type MemberBrief = {
+  id: number;
+  nickname: string;
+  avatar: string | null;
+  gender: string;
+  phone: string | null;
+  phoneMasked: string | null;
+  level: string;
+  levelLabel: string;
+  growthValue: number;
+  points: number;
+  balance: number;
+  orderCount: number;
+  totalAmount: number;
+  unusedCouponCount: number;
+  nextLevel: NextLevel | null;
+  levelProgress: number;
+};
+
+export function parseMember(o: UTSJSONObject | null): MemberBrief | null {
+  if (o == null) {
+    return null;
+  }
+  const nextChild = child(o, "nextLevel");
+  const next: NextLevel | null = nextChild == null
+    ? null
+    : {
+        level: str(nextChild, "level"),
+        label: str(nextChild, "label"),
+        threshold: num(nextChild, "threshold"),
+        remaining: num(nextChild, "remaining"),
+      };
+  return {
+    id: num(o, "id"),
+    nickname: str(o, "nickname"),
+    avatar: optStr(o, "avatar"),
+    gender: str(o, "gender"),
+    phone: optStr(o, "phone"),
+    phoneMasked: optStr(o, "phoneMasked"),
+    level: str(o, "level"),
+    levelLabel: str(o, "levelLabel"),
+    growthValue: num(o, "growthValue"),
+    points: num(o, "points"),
+    balance: num(o, "balance"),
+    orderCount: num(o, "orderCount"),
+    totalAmount: num(o, "totalAmount"),
+    unusedCouponCount: num(o, "unusedCouponCount"),
+    nextLevel: next,
+    levelProgress: num(o, "levelProgress"),
+  };
+}
+
+export type Benefit = { code: string; name: string; icon: string; desc: string };
+export type TaskItem = {
+  code: string;
+  name: string;
+  desc: string;
+  icon: string;
+  rewardGrowth: number;
+  target: number;
+  current: number;
+  done: boolean;
+  action: string;
+};
+export type MemberDay = {
+  isMemberDay: boolean;
+  memberDays: number[];
+  daysUntilNext: number;
+  rewardPerYuan: number;
+};
+
+export type MemberCenter = {
+  member: MemberBrief | null;
+  benefits: Benefit[];
+  tasks: TaskItem[];
+  memberDay: MemberDay;
+};
+
+export function parseMemberCenter(o: UTSJSONObject | null): MemberCenter | null {
+  if (o == null) {
+    return null;
+  }
+  const memberChild = child(o, "member");
+  const dayChild = child(o, "memberDay");
+  const memberDays = dayChild == null ? ([] as number[]) : numArray(dayChild, "memberDays");
+  return {
+    member: parseMember(memberChild),
+    benefits: objArray(o, "benefits").map((item) => {
+      const benefit: Benefit = {
+        code: str(item, "code"),
+        name: str(item, "name"),
+        icon: str(item, "icon"),
+        desc: str(item, "desc"),
+      };
+      return benefit;
+    }),
+    tasks: objArray(o, "tasks").map((item) => {
+      const task: TaskItem = {
+        code: str(item, "code"),
+        name: str(item, "name"),
+        desc: str(item, "desc"),
+        icon: str(item, "icon"),
+        rewardGrowth: num(item, "rewardGrowth"),
+        target: num(item, "target"),
+        current: num(item, "current"),
+        done: boolv(item, "done"),
+        action: str(item, "action"),
+      };
+      return task;
+    }),
+    memberDay: {
+      isMemberDay: dayChild == null ? false : boolv(dayChild, "isMemberDay"),
+      memberDays: memberDays,
+      daysUntilNext: dayChild == null ? 0 : num(dayChild, "daysUntilNext"),
+      rewardPerYuan: dayChild == null ? 1 : num(dayChild, "rewardPerYuan"),
+    },
+  };
+}
+
+/* ------------------------------ 优惠券 ------------------------------ */
+
+export type Coupon = {
+  id: number;
+  couponNo: string;
+  name: string;
+  type: string;
+  amount: number | null;
+  discount: number | null;
+  /** 券面左侧大字，后端算好：¥8 / 8.8折 */
+  faceText: string;
+  threshold: number;
+  thresholdText: string;
+  description: string | null;
+  validText: string;
+  status: string;
+  scopeText: string;
+  usedAt: string | null;
+};
+
+export function parseCoupon(o: UTSJSONObject): Coupon {
+  return {
+    id: num(o, "id"),
+    couponNo: str(o, "couponNo"),
+    name: str(o, "name"),
+    type: str(o, "type"),
+    amount: optNum(o, "amount"),
+    discount: optNum(o, "discount"),
+    faceText: str(o, "faceText"),
+    threshold: num(o, "threshold"),
+    thresholdText: str(o, "thresholdText"),
+    description: optStr(o, "description"),
+    validText: str(o, "validText"),
+    status: str(o, "status"),
+    scopeText: str(o, "scopeText"),
+    usedAt: optStr(o, "usedAt"),
+  };
+}
+
+export function parseCouponList(o: UTSJSONObject | null): Coupon[] {
+  if (o == null) {
+    return [] as Coupon[];
+  }
+  return couponArray(o).map((item) => parseCoupon(item));
+}
+
+export type UsableCoupon = {
+  coupon: Coupon;
+  usable: boolean;
+  discountAmount: number;
+  unusableReason: string | null;
+};
+
+export function parseUsableCoupons(o: UTSJSONObject | null): UsableCoupon[] {
+  if (o == null) {
+    return [] as UsableCoupon[];
+  }
+  return objArray(o, "usableCoupons").map((item) => {
+    const usable: UsableCoupon = {
+      coupon: parseCoupon(item),
+      usable: boolv(item, "usable"),
+      discountAmount: num(item, "discountAmount"),
+      unusableReason: optStr(item, "unusableReason"),
+    };
+    return usable;
+  });
+}
+
+/* ------------------------------ 运营位卡片 ------------------------------ */
+
+/**
+ * /client/activities 下发的卡片。
+ *
+ * title / subTitle / actionText 都是后端拼好的整句话，前端不参与文案组装；
+ * action 只用来决定点去哪一页（见 common/activity.uts）。
+ */
+export type ActivityCard = {
+  id: number;
+  source: string;
+  title: string;
+  subTitle: string | null;
+  icon: string | null;
+  action: string;
+  actionText: string | null;
+  /** action=promotion 时非 0，点卡片进菜单只看这个活动的菜 */
+  promotionId: number;
+};
+
+export function parseActivityList(o: UTSJSONObject | null): ActivityCard[] {
+  if (o == null) {
+    return [] as ActivityCard[];
+  }
+  return couponArray(o).map((item) => {
+    const card: ActivityCard = {
+      id: num(item, "id"),
+      source: str(item, "source"),
+      title: str(item, "title"),
+      subTitle: optStr(item, "subTitle"),
+      icon: optStr(item, "icon"),
+      action: str(item, "action"),
+      actionText: optStr(item, "actionText"),
+      promotionId: num(item, "promotionId"),
+    };
+    return card;
+  });
+}
+
+export type ClaimableCoupon = {
+  templateId: number;
+  name: string;
+  type: string;
+  faceText: string;
+  thresholdText: string;
+  description: string | null;
+  validText: string;
+  scopeText: string;
+  remaining: number;
+  claimable: boolean;
+  claimTip: string | null;
+};
+
+export function parseClaimableList(o: UTSJSONObject | null): ClaimableCoupon[] {
+  if (o == null) {
+    return [] as ClaimableCoupon[];
+  }
+  return couponArray(o).map((item) => {
+    const claimable: ClaimableCoupon = {
+      templateId: num(item, "templateId"),
+      name: str(item, "name"),
+      type: str(item, "type"),
+      faceText: str(item, "faceText"),
+      thresholdText: str(item, "thresholdText"),
+      description: optStr(item, "description"),
+      validText: str(item, "validText"),
+      scopeText: str(item, "scopeText"),
+      remaining: num(item, "remaining"),
+      claimable: boolv(item, "claimable"),
+      claimTip: optStr(item, "claimTip"),
+    };
+    return claimable;
+  });
+}
+
+/* ------------------------------ 订单 ------------------------------ */
+
+export type OrderItemView = {
+  id: number;
+  dishId: number | null;
+  dishName: string;
+  dishImage: string | null;
+  specDesc: string | null;
+  unitPrice: number;
+  quantity: number;
+  totalAmount: number;
+};
+
+export type OrderBrief = {
+  orderNo: string;
+  status: string;
+  statusLabel: string;
+  payStatus: string;
+  payStatusLabel: string;
+  dineType: string;
+  dineTypeLabel: string;
+  tableNo: string | null;
+  peopleCount: number;
+  pickupCode: string | null;
+  itemCount: number;
+  dishAmount: number;
+  packingAmount: number;
+  deliveryAmount: number;
+  discountAmount: number;
+  payAmount: number;
+  remark: string | null;
+  handleRemark: string | null;
+  createdAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  canCancel: boolean;
+  canPay: boolean;
+  payRemainingSeconds: number | null;
+  items: OrderItemView[];
+};
+
+export function parseOrder(o: UTSJSONObject): OrderBrief {
+  return {
+    orderNo: str(o, "orderNo"),
+    status: str(o, "status"),
+    statusLabel: str(o, "statusLabel"),
+    payStatus: str(o, "payStatus"),
+    payStatusLabel: str(o, "payStatusLabel"),
+    dineType: str(o, "dineType"),
+    dineTypeLabel: str(o, "dineTypeLabel"),
+    tableNo: optStr(o, "tableNo"),
+    peopleCount: num(o, "peopleCount"),
+    pickupCode: optStr(o, "pickupCode"),
+    itemCount: num(o, "itemCount"),
+    dishAmount: num(o, "dishAmount"),
+    packingAmount: num(o, "packingAmount"),
+    deliveryAmount: num(o, "deliveryAmount"),
+    discountAmount: num(o, "discountAmount"),
+    payAmount: num(o, "payAmount"),
+    remark: optStr(o, "remark"),
+    handleRemark: optStr(o, "handleRemark"),
+    createdAt: optStr(o, "createdAt"),
+    cancelledAt: optStr(o, "cancelledAt"),
+    cancelReason: optStr(o, "cancelReason"),
+    canCancel: boolv(o, "canCancel"),
+    canPay: boolv(o, "canPay"),
+    payRemainingSeconds: optNum(o, "payRemainingSeconds"),
+    items: objArray(o, "items").map((item) => {
+      const view: OrderItemView = {
+        id: num(item, "id"),
+        dishId: optNum(item, "dishId"),
+        dishName: str(item, "dishName"),
+        dishImage: optStr(item, "dishImage"),
+        specDesc: optStr(item, "specDesc"),
+        unitPrice: num(item, "unitPrice"),
+        quantity: num(item, "quantity"),
+        totalAmount: num(item, "totalAmount"),
+      };
+      return view;
+    }),
+  };
+}
+
+export function parseOrderList(o: UTSJSONObject | null): OrderBrief[] {
+  if (o == null) {
+    return [] as OrderBrief[];
+  }
+  return objArray(o, "list").map((item) => parseOrder(item));
+}
+
+export type OrderStep = {
+  code: string;
+  label: string;
+  desc: string;
+  done: boolean;
+  current: boolean;
+  at: string | null;
+};
+
+export type OrderTrace = {
+  order: OrderBrief;
+  steps: OrderStep[];
+  /** 预计出餐分钟数，-1 表示不显示倒计时 */
+  estimateMinutes: number;
+  estimateText: string;
+  closedTip: string | null;
+};
+
+export function parseOrderTrace(o: UTSJSONObject): OrderTrace {
+  const estimate = child(o, "estimate");
+  return {
+    order: parseOrder(o),
+    steps: objArray(o, "steps").map((item) => {
+      const step: OrderStep = {
+        code: str(item, "code"),
+        label: str(item, "label"),
+        desc: str(item, "desc"),
+        done: boolv(item, "done"),
+        current: boolv(item, "current"),
+        at: optStr(item, "at"),
+      };
+      return step;
+    }),
+    estimateMinutes: estimate == null ? -1 : num(estimate, "minutes"),
+    estimateText: estimate == null ? "" : str(estimate, "text"),
+    closedTip: optStr(o, "closedTip"),
+  };
+}
+
+/* ------------------------------ 结算 ------------------------------ */
+
+export type CheckoutLine = {
+  dishId: number;
+  dishName: string;
+  dishImage: string | null;
+  specDesc: string;
+  unitPrice: number;
+  quantity: number;
+  totalAmount: number;
+  memberPriced: boolean;
+  /** 活动价与会员价取低后由哪一方生效，结算页据此标「已享活动价」 */
+  promotionPriced: boolean;
+  promotionBadge: string | null;
+};
+
+export type CheckoutUsedCoupon = { id: number; name: string; discountAmount: number };
+
+export type Checkout = {
+  lines: CheckoutLine[];
+  dishAmount: number;
+  packingAmount: number;
+  deliveryAmount: number;
+  discountAmount: number;
+  payAmount: number;
+  usedCoupon: CheckoutUsedCoupon | null;
+  usableCoupons: UsableCoupon[];
+  storeOpen: boolean;
+  storeClosedTip: string | null;
+  tips: string[];
+};
+
+export function parseCheckout(o: UTSJSONObject | null): Checkout | null {
+  if (o == null) {
+    return null;
+  }
+  const usedChild = child(o, "usedCoupon");
+  const used: CheckoutUsedCoupon | null = usedChild == null
+    ? null
+    : {
+        id: num(usedChild, "id"),
+        name: str(usedChild, "name"),
+        discountAmount: num(usedChild, "discountAmount"),
+      };
+  return {
+    lines: objArray(o, "lines").map((item) => {
+      const line: CheckoutLine = {
+        dishId: num(item, "dishId"),
+        dishName: str(item, "dishName"),
+        dishImage: optStr(item, "dishImage"),
+        specDesc: str(item, "specDesc"),
+        unitPrice: num(item, "unitPrice"),
+        quantity: num(item, "quantity"),
+        totalAmount: num(item, "totalAmount"),
+        memberPriced: boolv(item, "memberPriced"),
+        promotionPriced: boolv(item, "promotionPriced"),
+        promotionBadge: optStr(item, "promotionBadge"),
+      };
+      return line;
+    }),
+    dishAmount: num(o, "dishAmount"),
+    packingAmount: num(o, "packingAmount"),
+    deliveryAmount: num(o, "deliveryAmount"),
+    discountAmount: num(o, "discountAmount"),
+    payAmount: num(o, "payAmount"),
+    usedCoupon: used,
+    usableCoupons: parseUsableCoupons(o),
+    storeOpen: boolv(o, "storeOpen"),
+    storeClosedTip: optStr(o, "storeClosedTip"),
+    tips: strArray(o, "tips"),
+  };
+}
+
+/* ------------------------------ 支付 ------------------------------ */
+
+export type PaymentChannelOption = { value: string; label: string };
+
+export function parsePaymentChannels(o: UTSJSONObject | null): PaymentChannelOption[] {
+  if (o == null) {
+    return [] as PaymentChannelOption[];
+  }
+  return couponArray(o).map((item) => {
+    const option: PaymentChannelOption = { value: str(item, "value"), label: str(item, "label") };
+    return option;
+  });
+}
+
+export type PaymentView = {
+  paymentNo: string;
+  channel: string;
+  amount: number;
+  status: string;
+  payParams: UTSJSONObject | null;
+};
+
+export function parsePayment(o: UTSJSONObject | null): PaymentView | null {
+  if (o == null) {
+    return null;
+  }
+  return {
+    paymentNo: str(o, "paymentNo"),
+    channel: str(o, "channel"),
+    amount: num(o, "amount"),
+    status: str(o, "status"),
+    payParams: child(o, "payParams"),
+  };
+}
+
+/* ------------------------------ 登录 ------------------------------ */
+
+export type LoginResult = {
+  accessToken: string;
+  refreshToken: string;
+  isNewMember: boolean;
+  member: MemberBrief | null;
+  store: StoreContext | null;
+};
+
+export function parseLogin(o: UTSJSONObject | null): LoginResult | null {
+  if (o == null) {
+    return null;
+  }
+  return {
+    accessToken: str(o, "accessToken"),
+    refreshToken: str(o, "refreshToken"),
+    isNewMember: boolv(o, "isNewMember"),
+    member: parseMember(child(o, "member")),
+    store: child(o, "store") == null ? null : parseStore(child(o, "store")!),
+  };
+}
+
+/* ------------------------------ 工具 ------------------------------ */
+
+/**
+ * 后端部分接口的 data 直接就是数组（券列表、推荐位、渠道列表）。
+ * UTSJSONObject 只能表达对象，所以数组型响应在请求层被包成 {"data": [...]}，
+ * 这里统一从两个位置找，页面不必关心是哪种包装。
+ */
+function couponArray(o: UTSJSONObject): UTSJSONObject[] {
+  if (o["data"] != null) {
+    return o["data"] as UTSJSONObject[];
+  }
+  if (o["list"] != null) {
+    return o["list"] as UTSJSONObject[];
+  }
+  return [] as UTSJSONObject[];
+}

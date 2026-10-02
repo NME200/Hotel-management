@@ -1,0 +1,448 @@
+<template>
+  <view class="page">
+    <scroll-view class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 头部：无渐变、无卡片，圆形头像直接落在页面背景上（规范 5.3 / 9.7） -->
+      <view class="head" @click="tapHead">
+        <view class="avatar">
+          <image v-if="avatarUrl() != ''" class="avatar-img" :src="avatarUrl()" mode="aspectFill"></image>
+          <view v-else class="avatar-inner"><text class="avatar-char">{{ avatarChar() }}</text></view>
+        </view>
+        <view class="head-main">
+          <text class="nick">{{ displayName() }}</text>
+          <text class="head-line">{{ headLine() }}</text>
+        </view>
+      </view>
+
+      <view class="rule"></view>
+
+      <!-- 三项数据：无白卡，只用 1px 竖线分隔，数字全部来自 fetchMember() -->
+      <view class="stats">
+        <view class="stat" @click="goCoupons">
+          <text class="stat-num">{{ couponCountText() }}</text>
+          <text class="stat-label">优惠券</text>
+        </view>
+        <view class="vline"></view>
+        <view class="stat" @click="goMember">
+          <text class="stat-num">{{ pointsText() }}</text>
+          <text class="stat-label">积分</text>
+        </view>
+        <view class="vline"></view>
+        <view class="stat" @click="goMember">
+          <text class="stat-num">{{ balanceText() }}</text>
+          <text class="stat-label">余额</text>
+        </view>
+      </view>
+
+      <view class="rule"></view>
+
+      <!-- 功能入口：无白卡，只放后端真有支撑的四个（详见交付说明） -->
+      <view class="entries">
+        <view class="entry" @click="goMember">
+          <view class="entry-icon"><text class="entry-char">会</text></view>
+          <text class="entry-name">会员中心</text>
+        </view>
+        <view class="entry" @click="goCoupons">
+          <view class="entry-icon"><text class="entry-char">券</text></view>
+          <text class="entry-name">我的优惠券</text>
+        </view>
+        <view class="entry" @click="goOrders">
+          <view class="entry-icon"><text class="entry-char">单</text></view>
+          <text class="entry-name">我的订单</text>
+        </view>
+        <view class="entry" @click="goStores">
+          <view class="entry-icon"><text class="entry-char">店</text></view>
+          <text class="entry-name">选择门店</text>
+        </view>
+      </view>
+
+      <view v-if="hasCard()" class="rule"></view>
+
+      <!-- 运营位色块：整张卡来自 /client/activities?slot=mine，商户没配时后端下发会员日卡 -->
+      <view v-if="hasCard()" class="day-card" @click="tapCard">
+        <text class="day-icon">{{ dayIcon() }}</text>
+        <view class="day-main">
+          <text class="day-title">{{ dayTitle() }}</text>
+          <text class="day-desc">{{ dayDesc() }}</text>
+        </view>
+        <text class="day-go">{{ dayGo() }} ›</text>
+      </view>
+
+      <view v-if="logged" class="rule"></view>
+
+      <view v-if="logged" class="logout" @click="tapLogout">
+        <text class="logout-text">退出登录</text>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { ActivityCard, MemberBrief } from '../../common/models.uts'
+  import { fetchActivities, fetchMember, login, logout } from '../../common/api.uts'
+  import { clearSession, isLogged, merchantCode, nickname } from '../../common/session.uts'
+  import { cardGo, cardSub, iconChar, openCard } from '../../common/activity.uts'
+  import { moneyText } from '../../common/format.uts'
+  import { toast } from '../../common/request.uts'
+
+  const logged = ref(false)
+  const member = ref<MemberBrief | null>(null)
+  const card = ref<ActivityCard | null>(null)
+
+  /** 未登录时 member 恒为 null，三项数据显示 0，页面照常可进。 */
+  function brief() : MemberBrief | null {
+    return logged.value ? member.value : null
+  }
+
+  function avatarUrl() : string {
+    const m = brief()
+    if (m == null) {
+      return ''
+    }
+    return m!.avatar == null ? '' : m!.avatar!
+  }
+
+  function avatarChar() : string {
+    return logged.value ? '我' : '+'
+  }
+
+  function displayName() : string {
+    const m = brief()
+    if (m == null) {
+      return '点击登录'
+    }
+    if (m!.nickname.length > 0) {
+      return m!.nickname
+    }
+    const saved = nickname()
+    return saved.length > 0 ? saved : '微信用户'
+  }
+
+  function headLine() : string {
+    const m = brief()
+    if (m == null) {
+      return '登录后查看会员等级、积分与优惠券'
+    }
+    return m!.levelLabel + ' · 成长值 ' + m!.growthValue
+  }
+
+  function couponCountText() : string {
+    const m = brief()
+    return m == null ? '0' : '' + m!.unusedCouponCount
+  }
+
+  function pointsText() : string {
+    const m = brief()
+    return m == null ? '0' : '' + m!.points
+  }
+
+  function balanceText() : string {
+    const m = brief()
+    return m == null ? '0' : moneyText(m!.balance)
+  }
+
+  async function load() : Promise<void> {
+    logged.value = isLogged()
+    member.value = logged.value ? await fetchMember() : null
+    card.value = await firstCard()
+  }
+
+  /** 没定店就不发请求：这个页面不在扫码动线上，弹「请先选择门店」会莫名其妙。 */
+  async function firstCard() : Promise<ActivityCard | null> {
+    if (merchantCode().length == 0) {
+      return null
+    }
+    const list = await fetchActivities('mine')
+    return list.length > 0 ? list[0] : null
+  }
+
+  function hasCard() : boolean {
+    return card.value != null
+  }
+
+  function dayIcon() : string {
+    const value = card.value
+    return value == null ? '' : iconChar(value!.icon)
+  }
+
+  function dayTitle() : string {
+    const value = card.value
+    return value == null ? '' : value!.title
+  }
+
+  function dayDesc() : string {
+    const value = card.value
+    return value == null ? '' : cardSub(value!)
+  }
+
+  function dayGo() : string {
+    const value = card.value
+    return value == null ? '' : cardGo(value!)
+  }
+
+  function tapCard() : void {
+    const value = card.value
+    if (value != null) {
+      openCard(value!)
+    }
+  }
+
+  /**
+   * 头部即登录入口：后端只认真实微信 code，失败原样 toast 后端文案，
+   * 绝不在前端伪造登录成功。事件绑定用同步函数包一层，异步工作在 doLogin 里。
+   */
+  function tapHead() : void {
+    if (logged.value) {
+      goMember()
+      return
+    }
+    doLogin()
+  }
+
+  async function doLogin() : Promise<void> {
+    const result = await login('', '')
+    if (result.code != 0) {
+      toast(result.message)
+      return
+    }
+    await load()
+    toast('登录成功')
+  }
+
+  function tapLogout() : void {
+    doLogout()
+  }
+
+  async function doLogout() : Promise<void> {
+    await logout()
+    clearSession()
+    member.value = null
+    logged.value = false
+    uni.reLaunch({ url: '/pages/index/index' })
+  }
+
+  function goMember() : void {
+    uni.navigateTo({ url: '/pages/mine/member' })
+  }
+
+  function goCoupons() : void {
+    uni.navigateTo({ url: '/pages/mine/coupons' })
+  }
+
+  function goOrders() : void {
+    uni.navigateTo({ url: '/pages/order/list' })
+  }
+
+  function goStores() : void {
+    uni.navigateTo({ url: '/pages/store/list' })
+  }
+
+  onShow(() => {
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+  }
+
+  /* 头部 */
+  .head {
+    flex-direction: row;
+    align-items: center;
+    padding-top: $space-5;
+    padding-bottom: $space-2;
+  }
+
+  .avatar {
+    width: 128rpx;
+    height: 128rpx;
+    border-radius: 128rpx;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .avatar-img {
+    width: 128rpx;
+    height: 128rpx;
+    border-radius: 128rpx;
+  }
+
+  .avatar-inner {
+    width: 128rpx;
+    height: 128rpx;
+    border-radius: 128rpx;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .avatar-char {
+    font-size: $font-h1;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .head-main {
+    flex: 1;
+    margin-left: $space-3;
+  }
+
+  .nick {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .head-line {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $brand;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  /* 模块分隔：24rpx + 1px 细线 + 24rpx（规范 5.3 的 24pt 间距） */
+  .rule {
+    height: 1px;
+    background-color: $divider;
+    margin-top: $space-3;
+    margin-bottom: $space-3;
+  }
+
+  /* 三项数据：无卡，只用竖线分隔 */
+  .stats {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .stat {
+    flex: 1;
+    align-items: center;
+    padding-top: $space-2;
+    padding-bottom: $space-2;
+  }
+
+  .vline {
+    width: 1px;
+    height: 72rpx;
+    background-color: $divider;
+  }
+
+  .stat-num {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .stat-label {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 功能入口 */
+  .entries {
+    flex-direction: row;
+    padding-top: $space-2;
+    padding-bottom: $space-2;
+  }
+
+  .entry {
+    flex: 1;
+    align-items: center;
+  }
+
+  .entry-icon {
+    width: $icon-category;
+    height: $icon-category;
+    border-radius: $icon-category;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .entry-char {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .entry-name {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 会员日小卡：全页唯一色块 */
+  .day-card {
+    flex-direction: row;
+    align-items: center;
+    padding: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-card;
+  }
+
+  .day-icon {
+    font-size: $font-h1;
+    font-weight: $semibold;
+    color: $brand;
+    margin-right: $space-3;
+  }
+
+  .day-main {
+    flex: 1;
+  }
+
+  .day-title {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .day-desc {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-2;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .day-go {
+    font-size: $font-caption;
+    color: $brand;
+    padding-left: $space-2;
+    padding-right: $space-1;
+  }
+
+  /* 退出登录：描边按钮 */
+  .logout {
+    height: 88rpx;
+    border: 1px solid $divider;
+    border-radius: $radius-btn-lg;
+    background-color: $card-bg;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .logout-text {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .bottom-space {
+    height: 160rpx;
+  }
+</style>

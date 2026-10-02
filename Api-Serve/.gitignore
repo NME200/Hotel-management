@@ -1,0 +1,16 @@
+node_modules/
+dist/
+# 本机与生产的 .env 都含真实口令；只提交 .env.example 这类模板
+.env
+.env.*
+!.env.example
+*.log
+logs/
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+coverage/
+tmp/
+# 手工调试时随手落的请求体
+.tmp-*

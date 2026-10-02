@@ -1,0 +1,441 @@
+<template>
+  <view class="page">
+    <!-- 搜索框沿用首页搜索入口的视觉（胶囊 + 极浅主色底） -->
+    <view class="head">
+      <view class="search">
+        <text class="search-icon">⌕</text>
+        <input
+          class="search-input"
+          :value="keyword"
+          placeholder="搜索菜品、分类"
+          placeholder-class="search-ph"
+          confirm-type="search"
+          @input="onInput"
+          @confirm="doSearch"
+        />
+        <view v-if="keyword.length > 0" class="search-clear" @click="clearKeyword"><text class="search-clear-text">×</text></view>
+      </view>
+      <view class="search-go" @click="doSearch"><text class="search-go-text">搜索</text></view>
+    </view>
+
+    <!-- 热门分类快选：分类名直接当关键词搜 -->
+    <view v-if="hotCates.length > 0" class="hot">
+      <text class="hot-title">热门分类</text>
+      <view class="chips">
+        <view v-for="cate in hotCates" :key="cate.id" class="hot-chip" @click="pickKeyword(cate.name)">
+          <text class="hot-chip-text">{{ cate.name }}</text>
+        </view>
+      </view>
+    </view>
+
+    <scroll-view class="scroll" direction="vertical" :show-scrollbar="false">
+      <view v-if="loading" class="state">
+        <text class="state-text">搜索中…</text>
+      </view>
+      <view v-else-if="!searched" class="state">
+        <text class="state-text">输入菜名或分类试试</text>
+      </view>
+      <view v-else-if="dishes.length == 0" class="state">
+        <text class="state-text">没有找到相关菜品</text>
+      </view>
+
+      <view v-else class="grid">
+        <view v-for="dish in dishes" :key="dish.id" class="card" @click="openDish(dish.id)">
+          <view class="thumb-box">
+            <image v-if="dish.image != null" class="thumb" :src="dish.image!" mode="aspectFill"></image>
+            <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(dish.name) }}</text></view>
+            <view v-if="dish.soldOut" class="thumb-mask">
+              <text class="thumb-mask-text">已售罄</text>
+            </view>
+          </view>
+          <text class="card-name">{{ dish.name }}</text>
+          <text class="card-meta">{{ salesText(dish.salesCount) }}</text>
+          <view class="card-bottom">
+            <view class="price-col">
+              <view class="price-line">
+                <text class="price">{{ salePriceText(dish) }}</text>
+                <text v-if="originPriceText(dish) != ''" class="origin-price">{{ originPriceText(dish) }}</text>
+                <text v-if="promoTagText(dish) != ''" class="promo-tag">{{ promoTagText(dish) }}</text>
+              </view>
+              <text v-if="memberTipText(dish) != ''" class="member-tip">{{ memberTipText(dish) }}</text>
+            </view>
+            <view class="add-btn" @click.stop="quickAdd(dish)">
+              <text class="add-sign">+</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { fetchMenu, searchDishes } from '../../common/api.uts'
+  import { DishBrief, MenuCategory } from '../../common/models.uts'
+  import { CartLine, add, lineKey } from '../../common/cart.uts'
+  import { amountText, salesText } from '../../common/format.uts'
+  import {
+    estimateUnitPrice,
+    memberTipText,
+    originPriceText,
+    promoTagText,
+    salePriceText,
+  } from '../../common/price.uts'
+  import { toast } from '../../common/request.uts'
+
+  const keyword = ref('')
+  const dishes = ref<DishBrief[]>([] as DishBrief[])
+  const categories = ref<MenuCategory[]>([] as MenuCategory[])
+  const loading = ref(false)
+  const searched = ref(false)
+
+  /** 快选行最多 8 个分类，和首页导航一个数量级。 */
+  const hotCates = computed(() : MenuCategory[] => categories.value.slice(0, 8))
+
+  function firstChar(name: string) : string {
+    return name.length == 0 ? '菜' : name.substring(0, 1)
+  }
+
+  function onInput(event: UniInputEvent) : void {
+    keyword.value = event.detail.value
+    // 关键词清空时结果同步清空，避免残留上一次搜索的列表
+    if (keyword.value.trim().length == 0) {
+      dishes.value = [] as DishBrief[]
+      searched.value = false
+    }
+  }
+
+  /** 模板绑定的处理函数一律保持同步签名，异步请求交给 runSearch。 */
+  function doSearch() : void {
+    runSearch()
+  }
+
+  async function runSearch() : Promise<void> {
+    const text = keyword.value.trim()
+    if (text.length == 0) {
+      dishes.value = [] as DishBrief[]
+      searched.value = false
+      return
+    }
+    loading.value = true
+    searched.value = true
+    dishes.value = await searchDishes(text)
+    loading.value = false
+  }
+
+  function pickKeyword(name: string) : void {
+    keyword.value = name
+    doSearch()
+  }
+
+  function clearKeyword() : void {
+    keyword.value = ''
+    dishes.value = [] as DishBrief[]
+    searched.value = false
+  }
+
+  /** 与首页一致：需要选规格的菜不凭空加购，跳详情让顾客选清楚。 */
+  function quickAdd(dish: DishBrief) : void {
+    if (dish.soldOut) {
+      toast('该菜品已售罄');
+      return
+    }
+    if (dish.needChoose) {
+      openDish(dish.id);
+      return
+    }
+    const line: CartLine = {
+      key: lineKey(dish.id, -1, []),
+      dishId: dish.id,
+      categoryId: dish.categoryId,
+      name: dish.name,
+      image: dish.image,
+      skuId: -1,
+      skuName: '',
+      optionSummary: '',
+      selections: [],
+      basePrice: dish.price,
+      unitPrice: unitPriceOf(dish),
+      quantity: 1,
+    }
+    add(line)
+    toast('已加入购物车')
+  }
+
+  function unitPriceOf(dish: DishBrief) : number {
+    return estimateUnitPrice(dish, dish.price)
+  }
+
+  function openDish(id: number) : void {
+    uni.navigateTo({ url: '/pages/dish/detail?id=' + id })
+  }
+
+  async function loadCategories() : Promise<void> {
+    categories.value = await fetchMenu()
+  }
+
+  onShow(() => {
+    loadCategories()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  /* 搜索行 */
+  .head {
+    flex-direction: row;
+    align-items: center;
+    padding: $space-3 $page-padding $space-2 $page-padding;
+    background-color: $card-bg;
+  }
+
+  .search {
+    flex: 1;
+    flex-direction: row;
+    align-items: center;
+    height: 88rpx;
+    padding-left: $space-3;
+    padding-right: $space-2;
+    background-color: $brand-bg;
+    border-radius: $radius-search;
+  }
+
+  .search-icon {
+    font-size: 32rpx;
+    color: $text-3;
+    margin-right: $space-1;
+  }
+
+  .search-input {
+    flex: 1;
+    height: 88rpx;
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .search-ph {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  .search-clear {
+    width: 88rpx;
+    height: 88rpx;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .search-clear-text {
+    font-size: 40rpx;
+    color: $text-3;
+    line-height: 40rpx;
+  }
+
+  .search-go {
+    width: 128rpx;
+    height: 88rpx;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .search-go-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  /* 热门分类快选 */
+  .hot {
+    padding: $space-2 $page-padding $space-3 $page-padding;
+    background-color: $card-bg;
+    border-bottom: 1px solid $divider;
+  }
+
+  .hot-title {
+    font-size: $font-caption;
+    color: $text-3;
+    margin-bottom: $space-2;
+  }
+
+  .chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .hot-chip {
+    height: 88rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    margin-right: $space-2;
+    margin-bottom: $space-2;
+    background-color: $chip-bg;
+    border-radius: $radius-tag;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .hot-chip-text {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .scroll {
+    flex: 1;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+  }
+
+  /* 提示态 */
+  .state {
+    padding: $space-6;
+    align-items: center;
+  }
+
+  .state-text {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  /* 双列菜品卡：与首页同一套尺寸（图高:图宽 = 3:4） */
+  .grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .card {
+    width: 336rpx;
+    margin-bottom: $space-3;
+    padding: $space-2;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .thumb-box {
+    position: relative;
+    width: 304rpx;
+    height: 405rpx;
+  }
+
+  .thumb {
+    width: 304rpx;
+    height: 405rpx;
+    border-radius: $radius-thumb;
+    background-color: $chip-bg;
+  }
+
+  .thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-char {
+    font-size: 72rpx;
+    color: $brand;
+    font-weight: $semibold;
+  }
+
+  .thumb-mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 304rpx;
+    height: 405rpx;
+    border-radius: $radius-thumb;
+    background-color: rgba(0, 0, 0, 0.4);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-mask-text {
+    font-size: $font-body;
+    color: #FFFFFF;
+  }
+
+  .card-name {
+    margin-top: $space-2;
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .card-meta {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .card-bottom {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .price-col {
+    flex: 1;
+  }
+
+  .price-line {
+    flex-direction: row;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+
+  .price {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .origin-price {
+    font-size: $font-small;
+    color: $text-3;
+    text-decoration: line-through;
+    margin-left: $space-1;
+  }
+
+  .promo-tag {
+    font-size: $font-small;
+    color: $brand;
+    background-color: $brand-light;
+    border-radius: $radius-tag;
+    padding-left: $space-1;
+    padding-right: $space-1;
+    margin-left: $space-1;
+  }
+
+  .member-tip {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .add-btn {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .add-sign {
+    font-size: 40rpx;
+    color: #FFFFFF;
+    line-height: 40rpx;
+  }
+
+  .bottom-space {
+    height: 120rpx;
+  }
+</style>

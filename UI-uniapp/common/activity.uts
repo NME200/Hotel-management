@@ -1,0 +1,78 @@
+// 运营位卡片的展示与跳转：首页轮播、「我的」页卡、会员中心活动区共用一份。
+//
+// 卡片上的每个字都来自 /client/activities，这里只做两件事：
+// 把图标机器码换成一个品牌色汉字，以及把 action 换成对应页面的跳转。
+
+import { ActivityCard } from "./models.uts";
+
+/** 后端没给图标（或给了前端没映射的码）时统一用「促」，不留空白格。 */
+export function iconChar(icon: string | null): string {
+  if (icon == "calendar") {
+    return "日";
+  }
+  if (icon == "ticket") {
+    return "券";
+  }
+  if (icon == "bolt") {
+    return "快";
+  }
+  if (icon == "points") {
+    return "分";
+  }
+  if (icon == "price") {
+    return "¥";
+  }
+  if (icon == "order" || icon == "orders") {
+    return "单";
+  }
+  if (icon == "profile") {
+    return "档";
+  }
+  if (icon == "service") {
+    return "客";
+  }
+  if (icon == null) {
+    return "告";
+  }
+  return "促";
+}
+
+export function cardSub(card: ActivityCard): string {
+  const text = card.subTitle;
+  return text == null ? "" : text!;
+}
+
+/** 右侧入口文字：后端没给 actionText 就是无跳转的纯告知卡，整块按钮不渲染。 */
+export function cardGo(card: ActivityCard): string {
+  const text = card.actionText;
+  return text == null ? "" : text!;
+}
+
+export function openCard(card: ActivityCard): void {
+  const action = card.action;
+  if (action == "promotion") {
+    // 点活动卡进菜单只看参与的菜：筛选条件走存储，和分类聚焦同一套做法
+    uni.setStorageSync("dc_focus_promotion", card.promotionId);
+    uni.switchTab({ url: "/pages/menu/menu" });
+    return;
+  }
+  if (action == "coupons") {
+    uni.navigateTo({ url: "/pages/mine/coupons" });
+    return;
+  }
+  if (action == "member") {
+    uni.navigateTo({ url: "/pages/mine/member" });
+    return;
+  }
+  if (action == "stores") {
+    uni.navigateTo({ url: "/pages/store/list" });
+    return;
+  }
+  if (action == "search") {
+    uni.navigateTo({ url: "/pages/search/search" });
+    return;
+  }
+  if (action == "menu") {
+    uni.switchTab({ url: "/pages/menu/menu" });
+  }
+}

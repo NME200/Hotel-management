@@ -1,0 +1,105 @@
+// UTSJSONObject 取值 helper：后端统一响应体是 { code, message, data, timestamp, requestId }。
+//
+// 为什么用下标 obj[key] 而不是 obj.getString(key)：
+// uni-app x 里 uni.request 的 res.data、以及 onLoad 的 options，运行时都是**普通对象**，
+// `as UTSJSONObject` 只是编译期断言，并不会真的造出一个带 getString/getJSONObject 方法的实例。
+// 在微信小程序端调用这些 getter 会抛 `xxx.getJSONObject is not a function`（本次就踩了）。
+// 官方文档给的写法就是下标访问 + 逐层 as，所以这里统一走这条路。
+
+export function str(obj: UTSJSONObject, key: string): string {
+  const value = obj[key];
+  if (value == null) {
+    return "";
+  }
+  return "" + value;
+}
+
+/** 允许 null 的字符串字段（后端可空列），空串也归一成 null，模板里好判断。 */
+export function optStr(obj: UTSJSONObject, key: string): string | null {
+  const value = obj[key];
+  if (value == null) {
+    return null;
+  }
+  const text = "" + value;
+  return text.length == 0 ? null : text;
+}
+
+export function num(obj: UTSJSONObject, key: string): number {
+  const value = obj[key];
+  if (value == null) {
+    return 0;
+  }
+  return value as number;
+}
+
+export function optNum(obj: UTSJSONObject, key: string): number | null {
+  const value = obj[key];
+  if (value == null) {
+    return null;
+  }
+  return value as number;
+}
+
+export function boolv(obj: UTSJSONObject, key: string): boolean {
+  const value = obj[key];
+  if (value == null) {
+    return false;
+  }
+  return value as boolean;
+}
+
+/** 对象数组字段：缺失时返回空数组而不是 null，页面可以直接 v-for 不用判空。 */
+export function objArray(obj: UTSJSONObject, key: string): UTSJSONObject[] {
+  const value = obj[key];
+  if (value == null) {
+    return [] as UTSJSONObject[];
+  }
+  return value as UTSJSONObject[];
+}
+
+export function strArray(obj: UTSJSONObject, key: string): string[] {
+  const value = obj[key];
+  if (value == null) {
+    return [] as string[];
+  }
+  return value as string[];
+}
+
+export function numArray(obj: UTSJSONObject, key: string): number[] {
+  const value = obj[key];
+  if (value == null) {
+    return [] as number[];
+  }
+  return value as number[];
+}
+
+/** 嵌套对象：先判空再 as，返回的仍是普通对象，继续用这套 helper 往下取。 */
+export function child(obj: UTSJSONObject, key: string): UTSJSONObject | null {
+  const value = obj[key];
+  if (value == null) {
+    return null;
+  }
+  return value as UTSJSONObject;
+}
+
+/** 后端把 Date 序列化成 ISO 字符串；这里只取到分钟，秒在界面上没有意义。 */
+export function dateText(value: string | null): string {
+  if (value == null || value.length < 16) {
+    return "";
+  }
+  return value.substring(0, 10) + " " + value.substring(11, 16);
+}
+
+export function dayText(value: string | null): string {
+  if (value == null || value.length < 10) {
+    return "";
+  }
+  return value.substring(0, 10);
+}
+
+export function clockText(value: string | null): string {
+  if (value == null || value.length < 16) {
+    return "";
+  }
+  return value.substring(11, 16);
+}

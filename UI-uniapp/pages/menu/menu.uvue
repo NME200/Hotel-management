@@ -1,0 +1,1285 @@
+<template>
+  <view class="page">
+    <view v-if="store == null" class="empty">
+      <text class="empty-title">还没有选择门店</text>
+      <text class="empty-desc">扫描桌上的小程序码，或从门店列表选一家</text>
+      <view class="empty-btn" @click="goStores"><text class="empty-btn-text">选择门店</text></view>
+    </view>
+
+    <view v-else class="body">
+      <!-- 左分类栏：占屏宽 1/4，选中白底 + 左侧 3pt 绿色竖条 -->
+      <scroll-view class="rail" direction="vertical" :show-scrollbar="false">
+        <view v-for="cate in shownCategories" :key="cate.id" :class="cateClass(cate.id)" @click="pickCategory(cate.id)">
+          <view v-if="activeCategory == cate.id" class="rail-bar"></view>
+          <text :class="activeCategory == cate.id ? 'rail-name-on' : 'rail-name'">{{ cate.name }}</text>
+          <text class="rail-count">{{ cate.dishes.length }} 道</text>
+        </view>
+      </scroll-view>
+
+      <!-- 右菜品列表：件数和金额都在底部购物车栏上，这里不再重复一行 -->
+      <scroll-view class="list" direction="vertical" :show-scrollbar="false" :scroll-top="listScrollTop">
+        <!-- 从首页活动卡跳进来时只看参与的菜，一行说明 + 一键回到全部 -->
+        <view v-if="focusPromotion > 0" class="filter-bar">
+          <text class="filter-text">只看限时活动的菜品</text>
+          <text class="filter-clear" @click="clearPromotionFilter">看全部 ›</text>
+        </view>
+        <view v-for="dish in activeDishes" :key="dish.id" class="row" @click="openDish(dish.id)">
+          <view class="thumb-box">
+            <image v-if="dish.image != null" class="thumb" :src="dish.image!" mode="aspectFill"></image>
+            <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(dish.name) }}</text></view>
+            <view v-if="dish.soldOut" class="thumb-mask"><text class="thumb-mask-text">售罄</text></view>
+          </view>
+          <view class="row-main">
+            <text class="row-name">{{ dish.name }}</text>
+            <text class="row-sub">{{ dish.subtitle == null ? '' : dish.subtitle! }}</text>
+            <view class="row-meta">
+              <view class="row-tags">
+                <view v-for="tag in tagOf(dish)" :key="tag" class="tag"><text class="tag-text">{{ tag }}</text></view>
+              </view>
+              <text class="sales">已售 {{ dish.salesCount }}</text>
+            </view>
+            <view class="row-bottom">
+              <view class="price-col">
+                <view class="price-line">
+                  <text class="price">{{ salePriceText(dish) }}</text>
+                  <text v-if="originPriceText(dish) != ''" class="origin-price">{{ originPriceText(dish) }}</text>
+                  <text v-if="promoTagText(dish) != ''" class="promo-tag">{{ promoTagText(dish) }}</text>
+                </view>
+                <text v-if="memberTipText(dish) != ''" class="member-tip">{{ memberTipText(dish) }}</text>
+              </view>
+            </view>
+          </view>
+            <view class="row-action">
+            <view v-if="dishQuantity(dish) == 0" :class="dish.soldOut ? 'add-btn add-off' : 'add-btn'" @click.stop="tapAdd(dish)">
+              <text class="add-sign">+</text>
+            </view>
+            <view v-else class="stepper">
+              <view class="minus" @click.stop="decrease(dish)"><text class="minus-sign">−</text></view>
+              <text class="step-num">{{ dishQuantity(dish) }}</text>
+              <view class="plus" @click.stop="tapAdd(dish)"><text class="plus-sign">+</text></view>
+            </view>
+          </view>
+        </view>
+        <view v-if="activeDishes.length == 0" class="empty-list">
+          <text v-if="focusPromotion > 0" class="empty-list-text">这个活动暂时没有在售的菜品</text>
+          <text v-else class="empty-list-text">该分类下暂时没有在售菜品</text>
+        </view>
+        <view class="list-space"></view>
+      </scroll-view>
+    </view>
+
+    <!-- 规格选择弹窗：份量/辣度单选 + 加料多选，差价明示在标签里 -->
+    <view v-if="sheetDish != null" class="mask" @click="closeSheet">
+      <view class="sheet" @click.stop="noop">
+        <view class="sheet-head">
+          <image v-if="sheetDish!.image != null" class="sheet-thumb" :src="sheetDish!.image!" mode="aspectFill"></image>
+          <view v-else class="sheet-thumb sheet-thumb-fallback"><text class="thumb-char">{{ firstChar(sheetDish!.name) }}</text></view>
+          <view class="sheet-head-main">
+            <text class="sheet-name">{{ sheetDish!.name }}</text>
+            <text class="sheet-meta">已售 {{ sheetDish!.salesCount }} · {{ sheetDish!.subtitle == null ? '' : sheetDish!.subtitle! }}</text>
+            <text class="sheet-price">¥{{ amountText(sheetUnitPrice()) }}</text>
+          </view>
+          <view class="sheet-close" @click="closeSheet"><text class="sheet-close-text">×</text></view>
+        </view>
+
+        <scroll-view class="sheet-body" direction="vertical" :show-scrollbar="false">
+          <text v-if="sheetLoading" class="loading-text">规格加载中…</text>
+          <view v-if="!sheetLoading && sheetSkus.length > 0" class="group">
+            <text class="group-title">份量</text>
+            <view class="chips">
+              <view v-for="sku in sheetSkus" :key="sku.id" :class="sku.id == chosenSkuId ? 'chip chip-on' : 'chip'" @click="chooseSku(sku.id)">
+                <text :class="sku.id == chosenSkuId ? 'chip-text-on' : 'chip-text'">{{ sku.name }}{{ sku.priceDelta > 0 ? ' +¥' + amountText(sku.priceDelta) : '' }}</text>
+              </view>
+            </view>
+          </view>
+
+          <view v-for="group in sheetGroups" :key="group.id" class="group">
+            <text class="group-title">{{ group.name }}<text v-if="group.required" class="group-required">*必选</text><text v-else class="group-optional">（{{ group.type == 'multi' ? '可多选' : '单选' }}）</text></text>
+            <view class="chips">
+              <view v-for="option in group.options" :key="option.name" :class="chipClass(group, option.name)" @click="toggleOption(group, option.name)">
+                <text :class="isChosen(group, option.name) ? 'chip-text-on' : 'chip-text'">{{ option.name }}{{ option.priceDelta > 0 ? ' +¥' + amountText(option.priceDelta) : '' }}</text>
+              </view>
+            </view>
+          </view>
+          <view class="sheet-space"></view>
+        </scroll-view>
+
+        <view class="sheet-foot">
+          <view class="stepper stepper-lg">
+            <view class="minus" @click="stepSheet(-1)"><text class="minus-sign">−</text></view>
+            <text class="step-num">{{ sheetQuantity }}</text>
+            <view class="plus" @click="stepSheet(1)"><text class="plus-sign">+</text></view>
+          </view>
+          <view class="sheet-confirm" @click="confirmSheet">
+            <text class="sheet-confirm-text">加入购物车 ¥{{ amountText(sheetUnitPrice() * sheetQuantity) }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 底部悬浮购物车栏：与首页同款；点图标开购物清单，点「去结算」才进结算页 -->
+    <view v-if="store != null && cartNumber > 0" class="cart-bar">
+      <view class="cart-left" @click="openCartSheet">
+        <view class="cart-icon">
+          <image class="cart-glyph" :src="CART_ICON" mode="aspectFit"></image>
+          <view class="badge"><text class="badge-text">{{ cartNumber }}</text></view>
+        </view>
+        <text class="cart-summary">{{ '已选 ' + cartNumber + ' 件 · ¥' + amountText(cartTotal) }}</text>
+      </view>
+      <view class="cart-go" @click="goCheckout"><text class="cart-go-text">去结算</text></view>
+    </view>
+
+    <!-- 购物清单：从屏幕底部划出，改数量和清空都在这里完成，不跳新页面 -->
+    <view v-if="cartSheetVisible" class="mask" @click="closeCartSheet">
+      <view class="cart-sheet" @click.stop="noop">
+        <view class="cart-sheet-head">
+          <text class="cart-sheet-title">{{ '已选 ' + cartNumber + ' 件' }}</text>
+          <text class="cart-sheet-clear" @click="onClearCart">清空</text>
+        </view>
+        <scroll-view class="cart-sheet-body" direction="vertical" :show-scrollbar="false">
+          <view v-for="line in cartRows" :key="line.key" class="cart-line">
+            <view class="cart-line-main">
+              <text class="cart-line-name">{{ line.name }}</text>
+              <text v-if="lineSpec(line).length > 0" class="cart-line-spec">{{ lineSpec(line) }}</text>
+            </view>
+            <text class="cart-line-price">¥{{ amountText(line.unitPrice * line.quantity) }}</text>
+            <view class="stepper">
+              <view class="minus" @click="stepLine(line.key, -1)"><text class="minus-sign">−</text></view>
+              <text class="step-num">{{ line.quantity }}</text>
+              <view class="plus" @click="stepLine(line.key, 1)"><text class="plus-sign">+</text></view>
+            </view>
+          </view>
+        </scroll-view>
+        <view class="cart-sheet-foot">
+          <text class="cart-sheet-total">{{ '合计 ¥' + amountText(cartTotal) }}</text>
+          <view class="cart-sheet-go" @click="goCheckout"><text class="cart-sheet-go-text">去结算</text></view>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onLoad, onShow } from '@dcloudio/uni-app'
+  import { merchantCode, isLogged } from '../../common/session.uts'
+  import { resolveEntryCode } from '../../common/entry.uts'
+  import { fetchDish, fetchMenu, fetchStoreContext } from '../../common/api.uts'
+  import { DishBrief, MenuCategory, OptionGroup, Sku, StoreContext } from '../../common/models.uts'
+  import {
+    CartLine,
+    CartOptionSelection,
+    add,
+    cartAmount,
+    cartCount,
+    cartLines,
+    changeQuantity,
+    clearCart,
+    lineKey,
+    quantityOf,
+  } from '../../common/cart.uts'
+  import { amountText } from '../../common/format.uts'
+  import {
+    estimateUnitPrice,
+    memberTipText,
+    originPriceText,
+    promoTagText,
+    salePriceText,
+  } from '../../common/price.uts'
+  import { CART_ICON } from '../../common/icons.uts'
+  import { toast } from '../../common/request.uts'
+
+  const store = ref<StoreContext | null>(null)
+  const categories = ref<MenuCategory[]>([] as MenuCategory[])
+  const activeCategory = ref(0)
+  /** 从首页活动卡带进来的筛选，0 表示看全部 */
+  const focusPromotion = ref(0)
+  const listScrollTop = ref(0)
+  const cartNumber = ref(0)
+  const cartTotal = ref(0)
+  /** 购物清单弹层：清单内容直接读本地购物车，改数量后整体刷新。 */
+  const cartRows = ref<CartLine[]>([] as CartLine[])
+  const cartSheetVisible = ref(false)
+
+  // 规格弹窗：一次只会有一个菜品在选。规格与加料取自详情接口——
+  // 列表接口为了首屏只给「有没有规格」这一个标记，不带明细。
+  const sheetDish = ref<DishBrief | null>(null)
+  const sheetSkus = ref<Sku[]>([] as Sku[])
+  const sheetGroups = ref<OptionGroup[]>([] as OptionGroup[])
+  const chosenSkuId = ref(-1)
+  const chosenOptions = ref<string[]>([] as string[])
+  const sheetQuantity = ref(1)
+  const sheetLoading = ref(false)
+
+  /** 活动筛选后的分类：整类都没参与的菜就不出现在左栏，避免点进空分类。 */
+  const shownCategories = computed(() : MenuCategory[] => {
+    const want = focusPromotion.value
+    if (want == 0) {
+      return categories.value
+    }
+    const out : MenuCategory[] = []
+    for (const cate of categories.value) {
+      const hit = cate.dishes.filter((dish) => dish.promotionId == want)
+      if (hit.length == 0) {
+        continue
+      }
+      out.push({ id: cate.id, name: cate.name, icon: cate.icon, dishes: hit } as MenuCategory)
+    }
+    return out
+  })
+
+  const activeDishes = computed(() : DishBrief[] => {
+    const cate = shownCategories.value.find((item) => item.id == activeCategory.value)
+    if (cate != null) {
+      return cate!.dishes
+    }
+    // 筛选后当前分类可能被隐藏了，落到第一个还有菜的分类上
+    const first = shownCategories.value
+    return first.length == 0 ? ([] as DishBrief[]) : first[0].dishes
+  })
+
+  function clearPromotionFilter() : void {
+    focusPromotion.value = 0
+  }
+
+  function firstChar(name: string) : string {
+    return name.length == 0 ? '菜' : name.substring(0, 1)
+  }
+
+  /** 列表行只展示前两个标签，多了会把价格挤下去 */
+  function tagOf(dish: DishBrief) : string[] {
+    return dish.tags.slice(0, 2)
+  }
+
+  function cateClass(id: number) : string {
+    return id == activeCategory.value ? 'rail-item rail-item-on' : 'rail-item'
+  }
+
+  /** 无规格的菜只有一行；带规格的菜可能同时有「小份微辣」和「大份加蛋」两行，需要合计。 */
+  function dishQuantity(dish: DishBrief) : number {
+    if (!dish.needChoose) {
+      return quantityOf(lineKey(dish.id, -1, []))
+    }
+    return cartLines().filter((line) => line.dishId == dish.id).reduce((sum, line) => sum + line.quantity, 0)
+  }
+
+  function tapAdd(dish: DishBrief) : void {
+    if (dish.soldOut) {
+      toast('该菜品已售罄');
+      return
+    }
+    if (dish.needChoose) {
+      openSheet(dish);
+      return
+    }
+    addToCart(dish, -1, '', '', [] as CartOptionSelection[], localUnitPrice(dish), 1)
+  }
+
+  function decrease(dish: DishBrief) : void {
+    if (dish.needChoose) {
+      // 多行时先减最后加的那一行，与顾客「刚加了什么就撤掉什么」的直觉一致
+      const lines = cartLines().filter((item) => item.dishId == dish.id)
+      if (lines.length > 0) {
+        changeQuantity(lines[lines.length - 1].key, -1)
+      }
+    } else {
+      changeQuantity(lineKey(dish.id, -1, []), -1)
+    }
+    refreshCart()
+  }
+
+  async function openSheet(dish: DishBrief) : Promise<void> {
+    sheetDish.value = dish
+    chosenSkuId.value = -1
+    chosenOptions.value = [] as string[]
+    sheetQuantity.value = 1
+    sheetLoading.value = true
+    const detail = await fetchDish(dish.id)
+    if (detail == null) {
+      sheetDish.value = null
+      sheetLoading.value = false
+      toast('菜品信息加载失败，请重试')
+      return
+    }
+    sheetSkus.value = detail!.skus
+    sheetGroups.value = detail!.optionGroups
+    // 只有一种份量的菜默认选中它，省一次点击；多份量必须顾客自己选
+    if (detail!.skus.length == 1) {
+      chosenSkuId.value = detail!.skus[0].id
+    }
+    sheetLoading.value = false
+  }
+
+  function closeSheet() : void {
+    sheetDish.value = null
+  }
+
+  function noop() : void {}
+
+  function chooseSku(id: number) : void {
+    chosenSkuId.value = id
+  }
+
+  function groupMark(groupId: number, name: string) : string {
+    return '' + groupId + '::' + name
+  }
+
+  function toggleOption(group: OptionGroup, name: string) : void {
+    const mark = groupMark(group.id, name)
+    const index = chosenOptions.value.indexOf(mark)
+    if (index >= 0) {
+      chosenOptions.value.splice(index, 1)
+      return
+    }
+    if (group.type == 'single') {
+      // 单选组：先清掉同组的旧选择
+      chosenOptions.value = chosenOptions.value.filter((item) => !item.startsWith(groupMark(group.id, '')))
+    }
+    chosenOptions.value.push(mark)
+  }
+
+  function isChosen(group: OptionGroup, name: string) : boolean {
+    return chosenOptions.value.indexOf(groupMark(group.id, name)) >= 0
+  }
+
+  function chipClass(group: OptionGroup, name: string) : string {
+    return isChosen(group, name) ? 'chip chip-on' : 'chip'
+  }
+
+  function chosenGroupIds() : number[] {
+    return chosenOptions.value.map((item) => parseInt(item.split('::')[0]))
+  }
+
+  /** 弹窗单价：基础价 + 规格差价 + 加料差价，登录后再减会员立减额。 */
+  function sheetUnitPrice() : number {
+    const dish = sheetDish.value
+    if (dish == null) {
+      return 0
+    }
+    let price = dish!.price
+    const sku = sheetSkus.value.find((item) => item.id == chosenSkuId.value)
+    if (sku != null) {
+      price += sku!.priceDelta
+    }
+    for (const mark of chosenOptions.value) {
+      const parts = mark.split('::')
+      const groupId = parseInt(parts[0])
+      const group = sheetGroups.value.find((item) => item.id == groupId)
+      if (group == null) {
+        continue
+      }
+      const option = group!.options.find((item) => item.name == parts[1])
+      if (option != null) {
+        price += option!.priceDelta
+      }
+    }
+    return estimateUnitPrice(dish!, price)
+  }
+
+  function stepSheet(delta: number) : void {
+    sheetQuantity.value = Math.max(sheetQuantity.value + delta, 1)
+  }
+
+  function confirmSheet() : void {
+    const dish = sheetDish.value
+    if (dish == null || sheetLoading.value) {
+      return
+    }
+    if (sheetSkus.value.length > 0 && chosenSkuId.value <= 0) {
+      toast('请选择份量')
+      return
+    }
+    const missing = sheetGroups.value.find((group) => group.required && chosenGroupIds().indexOf(group.id) < 0)
+    if (missing != null) {
+      toast('请选择' + missing!.name)
+      return
+    }
+    const sku = sheetSkus.value.find((item) => item.id == chosenSkuId.value)
+    const selections: CartOptionSelection[] = []
+    const summaryParts: string[] = []
+    for (const group of sheetGroups.value) {
+      const names: string[] = []
+      for (const option of group.options) {
+        if (isChosen(group, option.name)) {
+          names.push(option.name)
+          summaryParts.push(option.priceDelta > 0 ? option.name + ' +¥' + amountText(option.priceDelta) : option.name)
+        }
+      }
+      if (names.length > 0) {
+        const selection: CartOptionSelection = { groupId: group.id, optionNames: names }
+        selections.push(selection)
+      }
+    }
+    addToCart(
+      dish,
+      sku == null ? -1 : sku!.id,
+      sku == null ? '' : sku!.name,
+      summaryParts.join(' / '),
+      selections,
+      sheetUnitPrice(),
+      sheetQuantity.value,
+    )
+    closeSheet()
+  }
+
+  function addToCart(dish: DishBrief, skuId: number, skuName: string, optionSummary: string, selections: CartOptionSelection[], unitPrice: number, quantity: number) : void {
+    const line: CartLine = {
+      key: lineKey(dish.id, skuId, selections),
+      dishId: dish.id,
+      categoryId: dish.categoryId,
+      name: dish.name,
+      image: dish.image,
+      skuId: skuId,
+      skuName: skuName,
+      optionSummary: optionSummary,
+      selections: selections,
+      basePrice: dish.price,
+      unitPrice: unitPrice,
+      quantity: quantity,
+    }
+    add(line)
+    refreshCart()
+    toast('已加入购物车')
+  }
+
+  function localUnitPrice(dish: DishBrief) : number {
+    return estimateUnitPrice(dish, dish.price)
+  }
+
+  async function load() : Promise<void> {
+    const code = merchantCode()
+    if (code.length == 0) {
+      return
+    }
+    store.value = await fetchStoreContext(code)
+    if (store.value == null) {
+      return
+    }
+    const menu = await fetchMenu()
+    categories.value = menu
+    applyPromotionFocus(menu)
+    if (activeCategory.value == 0 && menu.length > 0) {
+      const focus = uni.getStorageSync('dc_focus_category')
+      const want = focus == null ? 0 : focus as number
+      const matched = menu.find((item) => item.id == want)
+      activeCategory.value = matched == null ? menu[0].id : want
+      uni.removeStorageSync('dc_focus_category')
+    }
+    refreshCart()
+  }
+
+  /**
+   * 活动卡带进来的筛选要落得住：
+   * 活动可能刚好在跳转这几百毫秒里结束，这时安静地退回全部菜品，
+   * 而不是留一个「只看活动」的条却一道菜都没有。
+   */
+  function applyPromotionFocus(menu : MenuCategory[]) : void {
+    const raw = uni.getStorageSync('dc_focus_promotion')
+    if (raw == null) {
+      return
+    }
+    const want = raw as number
+    uni.removeStorageSync('dc_focus_promotion')
+    if (want <= 0) {
+      return
+    }
+    const hit = menu.some((cate) => cate.dishes.some((dish) => dish.promotionId == want))
+    if (!hit) {
+      focusPromotion.value = 0
+      return
+    }
+    focusPromotion.value = want
+    const firstCate = menu.find((cate) => cate.dishes.some((dish) => dish.promotionId == want))
+    if (firstCate != null) {
+      activeCategory.value = firstCate!.id
+    }
+  }
+
+  function refreshCart() : void {
+    cartNumber.value = cartCount()
+    cartTotal.value = cartAmount()
+    cartRows.value = cartLines()
+    // 最后一行被减掉后清单没有内容可展示了
+    if (cartNumber.value == 0) {
+      cartSheetVisible.value = false
+    }
+  }
+
+  function openCartSheet() : void {
+    cartSheetVisible.value = true
+  }
+
+  function closeCartSheet() : void {
+    cartSheetVisible.value = false
+  }
+
+  /** 清单里的规格文案：份量和加料，缺哪段就不显示哪段，不留孤立分隔符。 */
+  function lineSpec(line: CartLine) : string {
+    const parts: string[] = []
+    if (line.skuName.length > 0) {
+      parts.push(line.skuName)
+    }
+    if (line.optionSummary.length > 0) {
+      parts.push(line.optionSummary)
+    }
+    return parts.join(' · ')
+  }
+
+  function stepLine(key: string, delta: number) : void {
+    changeQuantity(key, delta)
+    refreshCart()
+  }
+
+  function onClearCart() : void {
+    clearCart()
+    refreshCart()
+  }
+
+  function openDish(id: number) : void {
+    uni.navigateTo({ url: '/pages/dish/detail?id=' + id })
+  }
+
+  function pickCategory(id: number) : void {
+    activeCategory.value = id
+    // 换分类时把右侧列表滚回顶部，否则顾客会停在上一类的滚动位置
+    listScrollTop.value = listScrollTop.value == 0 ? 1 : 0
+  }
+
+  function goStores() : void {
+    uni.navigateTo({ url: '/pages/store/list' })
+  }
+
+  function goCheckout() : void {
+    closeCartSheet()
+    if (!isLogged()) {
+      toast('请先登录后再结算')
+      uni.navigateTo({ url: '/pages/mine/mine' })
+      return
+    }
+    uni.navigateTo({ url: '/pages/order/checkout' })
+  }
+
+  onLoad((options: OnLoadOptions) => {
+    resolveEntryCode(options)
+  })
+
+  onShow(() => {
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .body {
+    flex: 1;
+    flex-direction: row;
+  }
+
+  /* 左分类栏 */
+  .rail {
+    width: 25%;
+    height: 100%;
+    background-color: $chip-bg;
+  }
+
+  .rail-item {
+    height: 148rpx;
+    padding-left: $space-3;
+    padding-right: $space-2;
+    justify-content: center;
+    position: relative;
+  }
+
+  .rail-item-on {
+    background-color: $card-bg;
+  }
+
+  .rail-bar {
+    position: absolute;
+    left: 0;
+    top: 34rpx;
+    width: 6rpx;
+    height: 80rpx;
+    background-color: $brand;
+    border-radius: 6rpx;
+  }
+
+  .rail-name {
+    font-size: $font-body;
+    color: $text-2;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .rail-name-on {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .rail-count {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  /* 右列表 */
+  .list {
+    flex: 1;
+    height: 100%;
+    background-color: $card-bg;
+    padding-left: $space-3;
+    padding-right: $space-3;
+  }
+
+  .row {
+    flex-direction: row;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .thumb-box {
+    position: relative;
+    width: $thumb-list;
+    height: $thumb-list;
+  }
+
+  .thumb {
+    width: $thumb-list;
+    height: $thumb-list;
+    border-radius: $radius-thumb;
+    background-color: $page-bg;
+  }
+
+  .thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-char {
+    font-size: 56rpx;
+    color: $brand;
+    font-weight: $semibold;
+  }
+
+  .thumb-mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: $thumb-list;
+    height: $thumb-list;
+    border-radius: $radius-thumb;
+    background-color: rgba(0, 0, 0, 0.4);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-mask-text {
+    font-size: $font-caption;
+    color: #FFFFFF;
+  }
+
+  .row-main {
+    flex: 1;
+    margin-left: $space-3;
+  }
+
+  .row-name {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .row-sub {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  /* 标签与销量同一行，价格行因此能独占底部整宽，活动价不会被挤断 */
+  .row-meta {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-1;
+  }
+
+  .row-tags {
+    flex: 1;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .tag {
+    margin-right: $space-1;
+    padding-left: $space-1;
+    padding-right: $space-1;
+    height: 32rpx;
+    background-color: $brand-light;
+    border-radius: $radius-tag;
+    justify-content: center;
+  }
+
+  .tag-text {
+    font-size: $font-small;
+    color: $brand;
+  }
+
+  .row-bottom {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .price-col {
+    flex: 1;
+  }
+
+  .price-line {
+    flex-direction: row;
+    align-items: baseline;
+    /* 原价与角标放不下的时候换到第二行：ucss 的 view 默认裁掉溢出，
+       不换行就会把「划线原价 + 活动标」整块挤没，只剩一个活动价 */
+    flex-wrap: wrap;
+  }
+
+  .price {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  /* 划线原价与活动角标：都挂在主价格后面，弱化处理 */
+  .origin-price {
+    font-size: $font-small;
+    color: $text-3;
+    text-decoration: line-through;
+    margin-left: $space-1;
+  }
+
+  .promo-tag {
+    font-size: $font-small;
+    color: $brand;
+    background-color: $brand-light;
+    border-radius: $radius-tag;
+    padding-left: $space-1;
+    padding-right: $space-1;
+    margin-left: $space-1;
+  }
+
+  .member-tip {
+    margin-top: 2rpx;
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  /* 活动筛选条：从首页活动卡跳进来才有 */
+  .filter-bar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: $space-2;
+    padding-bottom: $space-2;
+  }
+
+  .filter-text {
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  .filter-clear {
+    font-size: $font-caption;
+    color: $text-3;
+    padding-left: $space-2;
+    padding-right: $space-2;
+  }
+
+  .sales {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .row-action {
+    width: 200rpx;
+    justify-content: flex-end;
+    align-items: flex-end;
+    padding-top: 96rpx;
+  }
+
+  .add-btn {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .add-off {
+    background-color: $text-4;
+  }
+
+  .add-sign {
+    font-size: 40rpx;
+    color: #FFFFFF;
+    line-height: 40rpx;
+  }
+
+  /* 步进器 */
+  .stepper {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .minus {
+    width: 48rpx;
+    height: 48rpx;
+    border-radius: 48rpx;
+    border: 3rpx solid $brand;
+    background-color: #FFFFFF;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .minus-sign {
+    font-size: 34rpx;
+    color: $brand;
+    line-height: 34rpx;
+  }
+
+  .plus {
+    width: 48rpx;
+    height: 48rpx;
+    border-radius: 48rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .plus-sign {
+    font-size: 34rpx;
+    color: #FFFFFF;
+    line-height: 34rpx;
+  }
+
+  .step-num {
+    width: 64rpx;
+    text-align: center;
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  /* 规格弹窗 */
+  .mask {
+    position: fixed;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background-color: rgba(0, 0, 0, 0.45);
+    justify-content: flex-end;
+  }
+
+  .sheet {
+    max-height: 75%;
+    background-color: $card-bg;
+    border-top-left-radius: $radius-sheet;
+    border-top-right-radius: $radius-sheet;
+  }
+
+  .sheet-head {
+    flex-direction: row;
+    padding: $space-4;
+    position: relative;
+  }
+
+  .sheet-thumb {
+    width: 200rpx;
+    height: 200rpx;
+    border-radius: $radius-thumb;
+    background-color: $page-bg;
+  }
+
+  .sheet-thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-head-main {
+    flex: 1;
+    margin-left: $space-3;
+  }
+
+  .sheet-name {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .sheet-meta {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .sheet-price {
+    margin-top: $space-2;
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .sheet-close {
+    position: absolute;
+    right: $space-3;
+    top: $space-3;
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: rgba(0, 0, 0, 0.06);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-close-text {
+    font-size: 36rpx;
+    color: $text-2;
+    line-height: 36rpx;
+  }
+
+  .sheet-body {
+    max-height: 560rpx;
+    padding-left: $space-4;
+    padding-right: $space-4;
+  }
+
+  .group {
+    margin-bottom: $space-4;
+  }
+
+  .group-title {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    margin-bottom: $space-2;
+  }
+
+  .group-required {
+    font-size: $font-small;
+    color: $price-red;
+  }
+
+  .group-optional {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    height: 64rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    margin-right: $space-2;
+    margin-bottom: $space-2;
+    background-color: $chip-bg;
+    border-radius: $radius-tag;
+    border: 1.5px solid $chip-bg;
+    justify-content: center;
+  }
+
+  .chip-on {
+    background-color: $brand;
+    border: 1.5px solid $brand;
+  }
+
+  .chip-text {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .chip-text-on {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .sheet-space {
+    height: $space-4;
+  }
+
+  .sheet-foot {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: $space-3 $space-4 $space-3 $space-4;
+    @include safe-bottom($space-3);
+    border-top: 1px solid $divider;
+  }
+
+  .stepper-lg {
+    transform: scale(1.1);
+  }
+
+  .sheet-confirm {
+    flex: 1;
+    height: 88rpx;
+    margin-left: $space-4;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-confirm-text {
+    font-size: 32rpx;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  /* 悬浮购物车栏：原生 tabBar 在 webview 之外，bottom 就是贴着菜单栏上沿。
+   * z-index 比遮罩低，弹层划出时才会把栏一起盖住。 */
+  .cart-bar {
+    position: fixed;
+    left: $space-3;
+    right: $space-3;
+    bottom: $space-2;
+    z-index: 20;
+    height: $bar-cart-height;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-btn-lg;
+    box-shadow: $shadow-bar;
+  }
+
+  .cart-left {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .cart-icon {
+    width: 72rpx;
+    height: 72rpx;
+    position: relative;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .cart-glyph {
+    width: 48rpx;
+    height: 48rpx;
+  }
+
+  .badge {
+    position: absolute;
+    right: 6rpx;
+    top: 6rpx;
+    min-width: 32rpx;
+    height: 32rpx;
+    padding-left: 8rpx;
+    padding-right: 8rpx;
+    border-radius: 32rpx;
+    background-color: $badge-red;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .badge-text {
+    font-size: $font-small;
+    color: #FFFFFF;
+  }
+
+  .cart-summary {
+    margin-left: $space-2;
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  .cart-go {
+    height: 80rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .cart-go-text {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  /* 购物清单弹层 */
+  .cart-sheet {
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+    background-color: $card-bg;
+    border-top-left-radius: $radius-sheet;
+    border-top-right-radius: $radius-sheet;
+  }
+
+  .cart-sheet-head {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    height: 96rpx;
+  }
+
+  .cart-sheet-title {
+    font-size: $font-h3;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .cart-sheet-clear {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 清单最多露出三行多一点，再长就滚动，不能把整个点餐列表顶掉 */
+  .cart-sheet-body {
+    max-height: 520rpx;
+  }
+
+  .cart-line {
+    flex-direction: row;
+    align-items: center;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .cart-line-main {
+    flex: 1;
+    margin-right: $space-3;
+  }
+
+  .cart-line-name {
+    font-size: $font-body;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .cart-line-spec {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .cart-line-price {
+    margin-right: $space-3;
+    font-size: $font-body;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .cart-sheet-foot {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: $space-3;
+    @include safe-bottom($space-3);
+  }
+
+  .cart-sheet-total {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .cart-sheet-go {
+    height: 80rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .cart-sheet-go-text {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  /* 空状态 */
+  .empty {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: 88rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .empty-list {
+    padding: $space-6;
+    align-items: center;
+  }
+
+  .empty-list-text {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  /* 列表末尾留白：只要盖得住购物车栏的高度，多了会在短屏上出现一片空白 */
+  .list-space {
+    height: $bar-cart-height + $space-3;
+  }
+</style>

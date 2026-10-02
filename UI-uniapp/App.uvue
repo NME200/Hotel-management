@@ -1,0 +1,19 @@
+<script>
+	export default {
+		// 应用级生命周期。门店参数（小程序码 scene）由入口页面的 onLoad 处理，
+		// 那里能拿到最完整的 query，App 级只做一次启动日志。
+		onLaunch: function (options: OnLaunchOptions) {
+			console.log("点餐小程序启动，场景值：" + options.scene);
+		},
+		onShow: function (options: OnShowOptions) {
+			console.log("应用进入前台");
+		},
+		onHide: function () {
+			console.log("应用进入后台");
+		}
+	}
+</script>
+
+<style>
+
+</style>

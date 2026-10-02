@@ -1,0 +1,566 @@
+<template>
+  <view class="page">
+    <!-- 未定店时的引导：多商户小程序没有门店就没有任何数据可看 -->
+    <view v-if="store == null" class="empty-store">
+      <text class="empty-title">还没有选择门店</text>
+      <!-- 不用 mustache 里的三元：uvue 会把它编译成未解析的绑定 id（界面上直接显示 e0_6c 这种串） -->
+      <text v-if="loadError == ''" class="empty-desc">扫描桌上的小程序码，或从门店列表选一家</text>
+      <text v-else class="empty-desc">{{ loadError }}</text>
+      <view class="empty-btn" @click="goStores"><text class="empty-btn-text">选择门店</text></view>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 定位行 -->
+      <view class="loc-row">
+        <text class="loc-pin">◎</text>
+        <text class="loc-name">{{ storeName }}</text>
+        <text class="loc-change" @click="goStores">切换</text>
+      </view>
+
+      <!-- 搜索入口 -->
+      <view class="search" @click="goSearch">
+        <text class="search-icon">⌕</text>
+        <text class="search-hint">搜索菜品、分类</text>
+      </view>
+
+      <!-- Banner：卡片全部来自 /client/activities?slot=home，商户配的活动与系统生成的领券卡混排 -->
+      <swiper v-if="cards.length > 0" class="banner" :indicator-dots="true" :autoplay="cards.length > 1"
+        :interval="4500" :duration="320" circular
+        indicator-color="rgba(255,255,255,0.4)" indicator-active-color="#FFFFFF">
+        <swiper-item v-for="card in cards" :key="card.id" class="banner-item">
+          <view class="banner-body" @click="openCard(card)">
+            <text class="banner-title">{{ card.title }}</text>
+            <text class="banner-sub">{{ cardSub(card) }}</text>
+            <view v-if="card.actionText != null" class="banner-btn">
+              <text class="banner-btn-text">{{ cardGo(card) }}</text>
+            </view>
+          </view>
+        </swiper-item>
+      </swiper>
+
+      <!-- 分类导航：两排各四个 -->
+      <view class="section">
+        <text class="section-title">按分类点单</text>
+        <view class="cate-wrap">
+          <view v-for="(cate, index) in navCategories" :key="cate.id" class="cate-item" @click="goCategory(cate.id)">
+            <view class="cate-icon">
+              <text class="cate-char">{{ firstChar(cate.name) }}</text>
+            </view>
+            <text class="cate-name">{{ cate.name }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 今日推荐双列 -->
+      <view class="section">
+        <text class="section-title">今日推荐</text>
+        <view v-if="dishes.length == 0" class="loading">
+          <text class="loading-text">{{ loading ? '加载中…' : '这家店还没有上架菜品' }}</text>
+        </view>
+        <view class="grid">
+          <view v-for="dish in dishes" :key="dish.id" class="card" @click="openDish(dish.id)">
+            <view class="thumb-box">
+              <image v-if="dish.image != null" class="thumb" :src="dish.image!" mode="aspectFill"></image>
+              <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(dish.name) }}</text></view>
+              <view v-if="dish.soldOut" class="thumb-mask">
+                <text class="thumb-mask-text">已售罄</text>
+              </view>
+            </view>
+            <text class="card-name">{{ dish.name }}</text>
+            <text class="card-meta">{{ salesText(dish.salesCount) }}</text>
+            <view class="card-bottom">
+              <view class="price-col">
+                <view class="price-line">
+                  <text class="price">{{ salePriceText(dish) }}</text>
+                  <text v-if="originPriceText(dish) != ''" class="origin-price">{{ originPriceText(dish) }}</text>
+                  <text v-if="promoTagText(dish) != ''" class="promo-tag">{{ promoTagText(dish) }}</text>
+                </view>
+                <text v-if="memberTipText(dish) != ''" class="member-tip">{{ memberTipText(dish) }}</text>
+              </view>
+              <view class="add-btn" @click.stop="quickAdd(dish)">
+                <text class="add-sign">+</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onLoad, onShow } from '@dcloudio/uni-app'
+  import { merchantCode } from '../../common/session.uts'
+  import { resolveEntryCode } from '../../common/entry.uts'
+  import {
+    fetchActivities,
+    fetchMenu,
+    fetchRecommend,
+    fetchStoreContext,
+  } from '../../common/api.uts'
+  import { ActivityCard, DishBrief, MenuCategory, StoreContext } from '../../common/models.uts'
+  import { cardGo, cardSub, openCard } from '../../common/activity.uts'
+  import { CartLine, add, lineKey } from '../../common/cart.uts'
+  import { toast } from '../../common/request.uts'
+  import {
+    estimateUnitPrice,
+    memberTipText,
+    originPriceText,
+    promoTagText,
+    salePriceText,
+  } from '../../common/price.uts'
+
+  const store = ref<StoreContext | null>(null)
+  const categories = ref<MenuCategory[]>([] as MenuCategory[])
+  const dishes = ref<DishBrief[]>([] as DishBrief[])
+  const cards = ref<ActivityCard[]>([] as ActivityCard[])
+  const loading = ref(true)
+  /** 加载失败时必须把原因显示出来：静默空态会让人以为是没数据，实际可能是解析出错 */
+  const loadError = ref("")
+
+  const storeName = computed(() : string => store.value == null ? '' : store.value!.name)
+  /** 首页导航最多展示 8 个分类（两排 × 4），超出的从菜单页看。 */
+  const navCategories = computed(() : MenuCategory[] => categories.value.slice(0, 8))
+  function firstChar(name: string) : string {
+    return name.length == 0 ? '菜' : name.substring(0, 1)
+  }
+
+  function salesText(count: number) : string {
+    return '已售 ' + count
+  }
+
+  async function load() : Promise<void> {
+    const code = merchantCode()
+    if (code.length == 0) {
+      loadError.value = ''
+      loading.value = false
+      return
+    }
+    loading.value = true
+    loadError.value = ''
+    try {
+      await doLoad(code)
+    } catch (e : any) {
+      loadError.value = '请求或解析出错：' + (e instanceof Error ? (e as Error).message : '' + e)
+      loading.value = false
+    }
+  }
+
+  async function doLoad(code: string) : Promise<void> {
+    const context = await fetchStoreContext(code)
+    store.value = context
+    if (context == null) {
+      loadError.value = '门店 ' + code + ' 未返回数据（接口 code 非 0 或 data 为空）'
+      loading.value = false
+      return
+    }
+    categories.value = await fetchMenu()
+    dishes.value = await fetchRecommend()
+    cards.value = await fetchActivities('home')
+    loading.value = false
+    onCartChanged()
+    uni.setNavigationBarTitle({ title: context.name })
+  }
+
+  function quickAdd(dish: DishBrief) : void {
+    if (dish.soldOut) {
+      toast('该菜品已售罄');
+      return
+    }
+    if (dish.needChoose) {
+      // 需要选规格/加料的菜品不能凭空加购，跳详情让顾客选清楚
+      openDish(dish.id);
+      return
+    }
+    const line: CartLine = {
+      key: lineKey(dish.id, -1, []),
+      dishId: dish.id,
+      categoryId: dish.categoryId,
+      name: dish.name,
+      image: dish.image,
+      skuId: -1,
+      skuName: '',
+      optionSummary: '',
+      selections: [],
+      basePrice: dish.price,
+      unitPrice: estimateUnitPrice(dish, dish.price),
+      quantity: 1,
+    }
+    add(line)
+    onCartChanged()
+    toast('已加入购物车')
+  }
+
+  function openDish(id: number) : void {
+    uni.navigateTo({ url: '/pages/dish/detail?id=' + id })
+  }
+
+  function goCategory(id: number) : void {
+    uni.setStorageSync('dc_focus_category', id)
+    uni.switchTab({ url: '/pages/menu/menu' })
+  }
+
+  function goSearch() : void {
+    uni.navigateTo({ url: '/pages/search/search' })
+  }
+
+  function goStores() : void {
+    uni.navigateTo({ url: '/pages/store/list' })
+  }
+
+  onLoad((options: OnLoadOptions) => {
+    resolveEntryCode(options)
+  })
+
+  onShow(() => {
+    load()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding-left: $page-padding;
+    padding-right: $page-padding;
+  }
+
+  /* 定位行 */
+  .loc-row {
+    flex-direction: row;
+    align-items: center;
+    height: 88rpx;
+  }
+
+  .loc-pin {
+    font-size: $font-body;
+    color: $brand;
+    margin-right: $space-1;
+  }
+
+  .loc-name {
+    flex: 1;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .loc-change {
+    font-size: $font-caption;
+    color: $brand;
+    padding-left: $space-2;
+    padding-right: $space-2;
+    height: $hit-min;
+    line-height: $hit-min;
+  }
+
+  /* 搜索框 */
+  .search {
+    flex-direction: row;
+    align-items: center;
+    height: 80rpx;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: $brand-bg;
+    border-radius: $radius-search;
+  }
+
+  .search-icon {
+    font-size: 32rpx;
+    color: $text-3;
+    margin-right: $space-1;
+  }
+
+  .search-hint {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  /* Banner：渐变卡片不加投影（规范第六章）；swiper 需要显式高度 */
+  .banner {
+    margin-top: $space-4;
+    height: 240rpx;
+    border-radius: $radius-card;
+  }
+
+  .banner-item {
+    flex: 1;
+  }
+
+  .banner-body {
+    height: 240rpx;
+    padding: $space-4;
+    border-radius: $radius-card;
+    background-image: linear-gradient(135deg, $brand-gradient-from, $brand-gradient-to);
+  }
+
+  .banner-title {
+    font-size: $font-h1;
+    font-weight: $semibold;
+    color: #FFFFFF;
+  }
+
+  .banner-sub {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: #FFFFFF;
+  }
+
+  .banner-btn {
+    margin-top: $space-3;
+    align-self: flex-start;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    height: 56rpx;
+    background-color: #FFFFFF;
+    border-radius: $radius-btn-sm;
+    justify-content: center;
+  }
+
+  .banner-btn-text {
+    font-size: $font-caption;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  /* 分区 */
+  .section {
+    margin-top: $space-5;
+  }
+
+  .section-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+    margin-bottom: $space-3;
+  }
+
+  /* 分类导航 */
+  .cate-wrap {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .cate-item {
+    width: 25%;
+    align-items: center;
+    margin-bottom: $space-4;
+  }
+
+  .cate-icon {
+    width: $icon-category;
+    height: $icon-category;
+    border-radius: $icon-category;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .cate-char {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .cate-name {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  /* 双列菜品卡：图高:图宽 = 3:4 */
+  .grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .card {
+    width: 336rpx;
+    margin-bottom: $space-3;
+    padding: $space-2;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .thumb-box {
+    position: relative;
+    width: 304rpx;
+    height: 405rpx;
+  }
+
+  .thumb {
+    width: 304rpx;
+    height: 405rpx;
+    border-radius: $radius-thumb;
+    background-color: $chip-bg;
+  }
+
+  .thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-char {
+    font-size: 72rpx;
+    color: $brand;
+    font-weight: $semibold;
+  }
+
+  .thumb-mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 304rpx;
+    height: 405rpx;
+    border-radius: $radius-thumb;
+    background-color: rgba(0, 0, 0, 0.4);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-mask-text {
+    font-size: $font-body;
+    color: #FFFFFF;
+  }
+
+  .card-name {
+    margin-top: $space-2;
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .card-meta {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .card-bottom {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .price-col {
+    flex: 1;
+  }
+
+  .price-line {
+    flex-direction: row;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .price {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  /* 划线原价：只作对照，弱到不影响主价格 */
+  .origin-price {
+    font-size: $font-small;
+    color: $text-3;
+    text-decoration: line-through;
+    margin-left: $space-1;
+  }
+
+  /* 活动角标：文字由后端下发，尺寸与标签一致 */
+  .promo-tag {
+    font-size: $font-small;
+    color: $brand;
+    background-color: $brand-light;
+    border-radius: $radius-tag;
+    padding-left: $space-1;
+    padding-right: $space-1;
+    margin-left: $space-1;
+  }
+
+  .member-tip {
+    font-size: $font-small;
+    color: $text-3;
+  }
+
+  .add-btn {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .add-sign {
+    font-size: 40rpx;
+    color: #FFFFFF;
+    line-height: 40rpx;
+  }
+
+  /* 空状态 */
+  .empty-store {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: 88rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .loading {
+    padding: $space-5;
+    align-items: center;
+  }
+
+  .loading-text {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  /* 首页没有悬浮购物车栏，末尾留一点呼吸空间就够 */
+  .bottom-space {
+    height: $space-6;
+  }
+</style>

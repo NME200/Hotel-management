@@ -1,0 +1,924 @@
+<template>
+  <view class="page">
+    <!-- 未登录：onShow 已经把顾客带走，这里只负责不留白 -->
+    <view v-if="!logged" class="empty">
+      <text class="empty-title">请先登录</text>
+      <text class="empty-desc">登录后才能下单，正在跳转到「我的」</text>
+    </view>
+
+    <view v-else-if="!hasCart" class="empty">
+      <!-- 空购物车：不发算价请求 -->
+      <text class="empty-title">购物车还是空的</text>
+      <text class="empty-desc">先去点餐页选几道菜，再回来结算</text>
+      <view class="empty-btn" @click="goMenu"><text class="empty-btn-text">去点餐</text></view>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
+      <!-- 门店休息提示条：文案来自后端，提交按钮同时禁用 -->
+      <view v-if="!storeOpen" class="closed-bar">
+        <text class="closed-text">{{ closedTip }}</text>
+      </view>
+
+      <!-- 1. 菜品行：金额一律用后端返回的行小计，本地不做乘法 -->
+      <view class="card">
+        <view class="head-row">
+          <text class="card-title">菜品</text>
+          <text class="head-hint">{{ computing ? '算价中…' : '' }}</text>
+        </view>
+        <view v-for="(line, index) in lines" :key="index" class="dish-row">
+          <view class="thumb-box">
+            <image v-if="line.dishImage != null" class="thumb" :src="line.dishImage!" mode="aspectFill"></image>
+            <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(line.dishName) }}</text></view>
+          </view>
+          <view class="dish-main">
+            <text class="dish-name">{{ line.dishName }}</text>
+            <text v-if="line.specDesc.length > 0" class="dish-spec">{{ line.specDesc }}</text>
+            <text v-if="line.memberPriced" class="dish-member">已享会员价</text>
+            <text v-if="line.promotionPriced" class="dish-promo">{{ promoLabel(line) }}</text>
+            <view class="dish-bottom">
+              <view class="stepper">
+                <view class="minus" @click="step(index, -1)"><text class="minus-sign">−</text></view>
+                <text class="step-num">{{ line.quantity }}</text>
+                <view class="plus" @click="step(index, 1)"><text class="plus-sign">+</text></view>
+              </view>
+              <text class="dish-total">¥{{ amountText(line.totalAmount) }}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 2. 优惠券：已选显示券名与抵扣额，未选显示可用张数 -->
+      <view class="card">
+        <view class="head-row">
+          <text class="card-title">优惠券</text>
+          <text class="head-link" @click="openSheet">选择优惠券</text>
+        </view>
+        <view v-if="usedCoupon != null" class="coupon-picked">
+          <text class="coupon-picked-name">{{ '已选：' + usedCoupon!.name }}</text>
+          <text class="coupon-picked-cut">{{ '−' + moneyText(usedCoupon!.discountAmount) }}</text>
+        </view>
+        <text v-else class="coupon-none">{{ couponHint }}</text>
+      </view>
+
+      <!-- 3. 就餐方式：值必须是后端的 dine_in / pickup / takeout -->
+      <view class="card">
+        <text class="card-title">就餐方式</text>
+        <view class="dine-row">
+          <view :class="dineType == 'dine_in' ? 'dine dine-on' : 'dine'" @click="chooseDine('dine_in')">
+            <text :class="dineType == 'dine_in' ? 'dine-text-on' : 'dine-text'">堂食</text>
+          </view>
+          <view :class="dineType == 'pickup' ? 'dine dine-on' : 'dine'" @click="chooseDine('pickup')">
+            <text :class="dineType == 'pickup' ? 'dine-text-on' : 'dine-text'">自取</text>
+          </view>
+          <view :class="dineType == 'takeout' ? 'dine dine-on' : 'dine'" @click="chooseDine('takeout')">
+            <text :class="dineType == 'takeout' ? 'dine-text-on' : 'dine-text'">外送</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 4. 桌号（仅堂食）+ 备注 -->
+      <!-- 选券弹层开着时换成同尺寸的静态占位：input/textarea 是原生控件，
+           既会盖在弹层上面，也会抢走本该落在券行上的点击，z-index 压不住它们。 -->
+      <view class="card">
+        <view v-if="dineType == 'dine_in'" class="field-box">
+          <text class="card-title">桌号</text>
+          <input v-if="!sheetVisible" class="field" v-model="tableNo" placeholder="请填写桌号，如 A12" :maxlength="16"></input>
+          <view v-else class="field">
+            <text v-if="tableNo.length == 0" class="field-ph">请填写桌号，如 A12</text>
+            <text v-else class="field-text">{{ tableNo }}</text>
+          </view>
+        </view>
+        <view class="field-box">
+          <view class="head-row">
+            <text class="card-title">备注</text>
+            <text class="counter">{{ remark.length }}/255</text>
+          </view>
+          <textarea v-if="!sheetVisible" class="area" v-model="remark" placeholder="口味、忌口、餐具份数都可以写在这里" :maxlength="255"></textarea>
+          <view v-else class="area">
+            <text v-if="remark.length == 0" class="field-ph">口味、忌口、餐具份数都可以写在这里</text>
+            <text v-else class="field-text">{{ remark }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 5. 费用明细：四行 + 合计，合计只用后端 payAmount -->
+      <view class="card">
+        <text class="card-title">费用明细</text>
+        <view class="fee-row">
+          <text class="fee-label">菜品金额</text>
+          <text class="fee-value">¥{{ amountText(dishAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">打包费</text>
+          <text class="fee-value">¥{{ amountText(packingAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">配送费</text>
+          <text class="fee-value">¥{{ amountText(deliveryAmount) }}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-label">优惠</text>
+          <text :class="discountAmount > 0 ? 'fee-cut' : 'fee-value'">{{ discountAmount > 0 ? '−¥' + amountText(discountAmount) : '¥0' }}</text>
+        </view>
+        <view class="fee-divider"></view>
+        <view class="fee-row">
+          <text class="fee-total-label">合计</text>
+          <text class="fee-total">¥{{ amountText(payAmount) }}</text>
+        </view>
+        <text v-for="(tip, tipIndex) in tips" :key="tipIndex" class="fee-tip">{{ tip }}</text>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <!-- 底部提交：全页唯一的主色实心按钮 -->
+    <view v-if="logged && hasCart" class="action-bar">
+      <view :class="canSubmit ? 'submit' : 'submit submit-off'" @click="onSubmitTap">
+        <text :class="canSubmit ? 'submit-text' : 'submit-text-off'">{{ submitText }}</text>
+      </view>
+    </view>
+
+    <!-- 选券 Bottom Sheet：可用与不可用同屏列出，不可用点下去只提示原因 -->
+    <view v-if="sheetVisible" class="mask" @click="closeSheet">
+      <view class="sheet" @click.stop="noop">
+        <view class="sheet-head">
+          <text class="sheet-title">选择优惠券</text>
+          <view class="sheet-close" @click="closeSheet"><text class="sheet-close-text">×</text></view>
+        </view>
+        <scroll-view class="sheet-body" direction="vertical" :show-scrollbar="false">
+          <view v-if="usableCoupons.length == 0" class="sheet-empty">
+            <text class="sheet-empty-text">这张单暂无可用优惠券</text>
+          </view>
+          <view v-if="couponId > 0" class="coupon-row" @click="clearCoupon">
+            <view class="coupon-row-main">
+              <text class="coupon-row-name">不使用优惠券</text>
+            </view>
+            <text class="coupon-row-state">恢复原价</text>
+          </view>
+          <view v-for="item in usableCoupons" :key="item.coupon.id" :class="couponRowClass(item)" @click="pickCoupon(item)">
+            <view class="coupon-row-main">
+              <text :class="item.usable ? 'coupon-row-name' : 'coupon-row-name coupon-row-off'">{{ item.coupon.name }}</text>
+              <text :class="item.usable ? 'coupon-row-meta' : 'coupon-row-meta coupon-row-off'">{{ item.coupon.faceText + ' · ' + item.coupon.thresholdText }}</text>
+              <text v-if="!item.usable && item.unusableReason != null" class="coupon-row-reason">{{ item.unusableReason! }}</text>
+              <text v-else class="coupon-row-reason">{{ item.coupon.validText }}</text>
+            </view>
+            <view class="coupon-row-right">
+              <text v-if="couponId == item.coupon.id" class="coupon-row-flag">已选</text>
+              <text :class="item.usable ? 'coupon-row-cut' : 'coupon-row-cut coupon-row-off'">{{ item.usable ? '−' + moneyText(item.discountAmount) : item.coupon.faceText }}</text>
+            </view>
+          </view>
+          <view class="sheet-space"></view>
+        </scroll-view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onShow } from '@dcloudio/uni-app'
+  import { isLogged } from '../../common/session.uts'
+  import { checkout, createOrder } from '../../common/api.uts'
+  import { cartItemsPayload, cartLines, changeQuantity, clearCart } from '../../common/cart.uts'
+  import { Checkout, CheckoutLine, CheckoutUsedCoupon, UsableCoupon } from '../../common/models.uts'
+  import { amountText, moneyText } from '../../common/format.uts'
+  import { toast } from '../../common/request.uts'
+
+  const checkoutData = ref<Checkout | null>(null)
+  // 步进器要用购物车分组 id（checkout 返回的行里没有），所以按购物车快照的下标对齐
+  const cartKeys = ref<string[]>([] as string[])
+  const dineType = ref('dine_in')
+  const couponId = ref(0)
+  const tableNo = ref('')
+  const remark = ref('')
+  const sheetVisible = ref(false)
+  const computing = ref(false)
+  const submitting = ref(false)
+  const logged = ref(true)
+
+  // 连续点步进器时只认最后一次算价的结果
+  let recomputeSeq = 0
+
+  const hasCart = computed(() : boolean => cartKeys.value.length > 0)
+  const lines = computed(() : CheckoutLine[] => checkoutData.value == null ? ([] as CheckoutLine[]) : checkoutData.value!.lines)
+  const tips = computed(() : string[] => checkoutData.value == null ? ([] as string[]) : checkoutData.value!.tips)
+  const usableCoupons = computed(() : UsableCoupon[] => checkoutData.value == null ? ([] as UsableCoupon[]) : checkoutData.value!.usableCoupons)
+  const usedCoupon = computed(() : CheckoutUsedCoupon | null => checkoutData.value == null ? null : checkoutData.value!.usedCoupon)
+  const dishAmount = computed(() : number => checkoutData.value == null ? 0 : checkoutData.value!.dishAmount)
+  const packingAmount = computed(() : number => checkoutData.value == null ? 0 : checkoutData.value!.packingAmount)
+  const deliveryAmount = computed(() : number => checkoutData.value == null ? 0 : checkoutData.value!.deliveryAmount)
+  const discountAmount = computed(() : number => checkoutData.value == null ? 0 : checkoutData.value!.discountAmount)
+  const payAmount = computed(() : number => checkoutData.value == null ? 0 : checkoutData.value!.payAmount)
+  const storeOpen = computed(() : boolean => checkoutData.value == null ? true : checkoutData.value!.storeOpen)
+  const closedTip = computed(() : string => {
+    const tip = checkoutData.value == null ? null : checkoutData.value!.storeClosedTip
+    return tip == null ? '' : tip!
+  })
+  const usableCount = computed(() : number => usableCoupons.value.filter((item) => item.usable).length)
+  const couponHint = computed(() : string => usableCount.value > 0 ? usableCount.value + ' 张优惠券可用于本单' : '本单暂无可用优惠券')
+  const canSubmit = computed(() : boolean => !submitting.value && !computing.value && hasCart.value && storeOpen.value && checkoutData.value != null)
+  const submitText = computed(() : string => {
+    if (submitting.value) {
+      return '提交中…'
+    }
+    if (!storeOpen.value) {
+      return '门店休息中'
+    }
+    if (checkoutData.value == null) {
+      return computing.value ? '正在算价…' : '价格未算出，请重试'
+    }
+    return '提交订单 ¥' + amountText(payAmount.value)
+  })
+
+  function firstChar(name: string) : string {
+    return name.length == 0 ? '菜' : name.substring(0, 1)
+  }
+
+  /** 活动价生效标记：角标文字由后端给，这里只做一句成品文本。 */
+  function promoLabel(line: CheckoutLine) : string {
+    const badge = line.promotionBadge;
+    return badge == null ? '已享活动价' : '已享活动价 · ' + badge!;
+  }
+
+  /** 唯一一次的本地算价入口：所有金额字段都来自这里返回的后端结果。 */
+  async function recompute() : Promise<void> {
+    const cart = cartLines()
+    cartKeys.value = cart.map((line) => line.key)
+    if (cart.length == 0) {
+      checkoutData.value = null
+      sheetVisible.value = false
+      computing.value = false
+      return
+    }
+    computing.value = true
+    recomputeSeq += 1
+    const token = recomputeSeq
+    const items = cartItemsPayload()
+    let next: Checkout | null = await checkout(dineType.value, items, couponId.value)
+    if (next == null && couponId.value > 0) {
+      // 券不满足门槛时后端会拒绝整单算价：退回无券价，让顾客看到权威金额而不是卡在原地
+      couponId.value = 0
+      next = await checkout(dineType.value, items, 0)
+      if (next != null && token == recomputeSeq) {
+        toast('该优惠券已不满足使用条件，已按无券金额计算')
+      }
+    }
+    if (token != recomputeSeq) {
+      return
+    }
+    computing.value = false
+    if (next == null) {
+      toast('价格计算失败，请稍后重试')
+      return
+    }
+    checkoutData.value = next!
+  }
+
+  /** 步进器只改购物车，金额交给后端重算。 */
+  function step(index: number, delta: number) : void {
+    if (index < 0 || index >= cartKeys.value.length) {
+      return
+    }
+    changeQuantity(cartKeys.value[index], delta)
+    recompute()
+  }
+
+  function chooseDine(value: string) : void {
+    if (dineType.value == value) {
+      return
+    }
+    dineType.value = value
+    recompute()
+  }
+
+  function openSheet() : void {
+    sheetVisible.value = true
+  }
+
+  function closeSheet() : void {
+    sheetVisible.value = false
+  }
+
+  function noop() : void {}
+
+  function couponRowClass(item: UsableCoupon) : string {
+    return item.usable ? 'coupon-row' : 'coupon-row coupon-row-dim'
+  }
+
+  function pickCoupon(item: UsableCoupon) : void {
+    if (!item.usable) {
+      const reason = item.unusableReason
+      toast(reason == null ? '该优惠券暂不可用' : reason!)
+      return
+    }
+    couponId.value = item.coupon.id
+    sheetVisible.value = false
+    recompute()
+  }
+
+  function clearCoupon() : void {
+    couponId.value = 0
+    sheetVisible.value = false
+    recompute()
+  }
+
+  function onSubmitTap() : void {
+    doSubmit()
+  }
+
+  async function doSubmit() : Promise<void> {
+    if (submitting.value) {
+      return
+    }
+    if (!storeOpen.value) {
+      toast(closedTip.value.length > 0 ? closedTip.value : '门店休息中，暂时不能下单')
+      return
+    }
+    if (!hasCart.value || checkoutData.value == null) {
+      toast('请先选择菜品')
+      return
+    }
+    submitting.value = true
+    // 只在堂食时提交桌号，切到自取/外送不能把旧桌号带过去
+    const no = dineType.value == 'dine_in' ? tableNo.value : ''
+    const result = await createOrder(dineType.value, cartItemsPayload(), couponId.value, no, remark.value)
+    submitting.value = false
+    const order = result.order
+    if (order == null) {
+      // 失败话术是后端写好的顾客文案，前端不改写
+      toast(result.message.length == 0 ? '下单失败，请稍后重试' : result.message)
+      return
+    }
+    clearCart()
+    // redirectTo：回退不该回到结算页，避免重复下单。
+    // autopay=1 让跟踪页在订单和支付渠道都就绪后直接呼起支付窗口，
+    // 顾客付成功之前看到的只是「待支付」，取餐码也要等支付成功才发。
+    uni.redirectTo({ url: '/pages/order/trace?orderNo=' + order!.orderNo + '&autopay=1' })
+  }
+
+  function goMenu() : void {
+    uni.switchTab({ url: '/pages/menu/menu' })
+  }
+
+  onShow(() => {
+    if (!isLogged()) {
+      logged.value = false
+      toast('请先登录后再下单')
+      uni.switchTab({ url: '/pages/mine/mine' })
+      return
+    }
+    logged.value = true
+    recompute()
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $page-bg;
+  }
+
+  .scroll {
+    flex: 1;
+    padding: $page-padding;
+  }
+
+  /* 门店休息提示条 */
+  .closed-bar {
+    padding: $space-3;
+    margin-bottom: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-card;
+  }
+
+  .closed-text {
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  /* 卡片 */
+  .card {
+    padding: $space-4;
+    margin-bottom: $space-3;
+    background-color: $card-bg;
+    border-radius: $radius-card;
+    box-shadow: $shadow-card;
+  }
+
+  .head-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-title {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    margin-bottom: $space-2;
+  }
+
+  .head-hint {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .head-link {
+    height: $hit-min;
+    line-height: $hit-min;
+    padding-left: $space-2;
+    padding-right: $space-2;
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  /* 菜品行 */
+  .dish-row {
+    flex-direction: row;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  .thumb-box {
+    width: 120rpx;
+    height: 120rpx;
+  }
+
+  .thumb {
+    width: 120rpx;
+    height: 120rpx;
+    border-radius: $radius-thumb;
+    background-color: $page-bg;
+  }
+
+  .thumb-fallback {
+    justify-content: center;
+    align-items: center;
+  }
+
+  .thumb-char {
+    font-size: 40rpx;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .dish-main {
+    flex: 1;
+    margin-left: $space-3;
+  }
+
+  .dish-name {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .dish-spec {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .dish-member {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $brand;
+  }
+
+  .dish-promo {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $brand;
+  }
+
+  .dish-bottom {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  /* 数量步进器（规范 8.4） */
+  .stepper {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .minus {
+    width: 48rpx;
+    height: 48rpx;
+    border-radius: 48rpx;
+    border: 3rpx solid $brand;
+    background-color: #FFFFFF;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .minus-sign {
+    font-size: 34rpx;
+    color: $brand;
+    line-height: 34rpx;
+  }
+
+  .plus {
+    width: 48rpx;
+    height: 48rpx;
+    border-radius: 48rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .plus-sign {
+    font-size: 34rpx;
+    color: #FFFFFF;
+    line-height: 34rpx;
+  }
+
+  .step-num {
+    width: 64rpx;
+    text-align: center;
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  .dish-total {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  /* 优惠券 */
+  .coupon-picked {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-tag;
+  }
+
+  .coupon-picked-name {
+    flex: 1;
+    font-size: $font-body;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-picked-cut {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  .coupon-none {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 就餐方式单选胶囊 */
+  .dine-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .dine {
+    flex: 1;
+    height: 80rpx;
+    margin-right: $space-2;
+    border: 3rpx solid $divider;
+    border-radius: $radius-tag;
+    background-color: $card-bg;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .dine-on {
+    border: 3rpx solid $brand;
+    background-color: $brand-light;
+  }
+
+  .dine-text {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .dine-text-on {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  /* 桌号与备注 */
+  .field-box {
+    margin-top: $space-4;
+  }
+
+  .field {
+    height: 88rpx;
+    width: 100%;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: $page-bg;
+    border-radius: $radius-card;
+    font-size: $font-body;
+    color: $text-1;
+    justify-content: center;
+  }
+
+  /* 弹层开着时的静态占位：外观同 input/textarea，但不是原生控件，压得住也点不着 */
+  .field-text {
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .field-ph {
+    font-size: $font-body;
+    color: $text-4;
+  }
+
+  .counter {
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .area {
+    height: 160rpx;
+    width: 100%;
+    padding: $space-3;
+    background-color: $page-bg;
+    border-radius: $radius-card;
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  /* 费用明细：右对齐 */
+  .fee-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-2;
+  }
+
+  .fee-label {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .fee-value {
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .fee-cut {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $brand;
+  }
+
+  .fee-divider {
+    height: 1px;
+    margin-top: $space-3;
+    background-color: $divider;
+  }
+
+  .fee-total-label {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+  }
+
+  /* Price-LG：结算合计 */
+  .fee-total {
+    font-size: $font-price-lg;
+    font-weight: $bold;
+    line-height: $line-price-lg;
+    color: $brand;
+  }
+
+  .fee-tip {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .bottom-space {
+    @include safe-height(200rpx);
+  }
+
+  /* 底部固定主按钮 */
+  .action-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: $space-3 $space-4 $space-3 $space-4;
+    @include safe-bottom($space-3);
+    background-color: $card-bg;
+    box-shadow: $shadow-bar;
+  }
+
+  .submit {
+    height: 96rpx;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .submit-off {
+    background-color: $divider;
+  }
+
+  .submit-text {
+    font-size: 32rpx;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+
+  .submit-text-off {
+    font-size: 32rpx;
+    color: $text-4;
+  }
+
+  /* 选券 Bottom Sheet */
+  .mask {
+    position: fixed;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background-color: rgba(0, 0, 0, 0.45);
+    justify-content: flex-end;
+  }
+
+  .sheet {
+    max-height: 75%;
+    background-color: $card-bg;
+    border-top-left-radius: $radius-sheet;
+    border-top-right-radius: $radius-sheet;
+  }
+
+  .sheet-head {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: $space-4;
+    position: relative;
+  }
+
+  .sheet-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .sheet-close {
+    position: absolute;
+    right: $space-3;
+    top: $space-3;
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 56rpx;
+    background-color: rgba(0, 0, 0, 0.06);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .sheet-close-text {
+    font-size: 36rpx;
+    color: $text-2;
+    line-height: 36rpx;
+  }
+
+  .sheet-body {
+    max-height: 720rpx;
+    padding-left: $space-4;
+    padding-right: $space-4;
+  }
+
+  .sheet-empty {
+    padding: $space-5;
+    align-items: center;
+  }
+
+  .sheet-empty-text {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  .coupon-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: $space-3;
+    padding-bottom: $space-3;
+    border-bottom: 1px solid $divider;
+  }
+
+  /* 不可用的券整行降饱和，点击只提示原因 */
+  .coupon-row-dim {
+    opacity: 0.6;
+  }
+
+  .coupon-row-main {
+    flex: 1;
+  }
+
+  .coupon-row-right {
+    align-items: flex-end;
+    margin-left: $space-2;
+  }
+
+  .coupon-row-name {
+    font-size: $font-h3;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-row-meta {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  .coupon-row-reason {
+    margin-top: $space-1;
+    font-size: $font-small;
+    color: $text-3;
+    lines: 2;
+    text-overflow: ellipsis;
+  }
+
+  .coupon-row-cut {
+    font-size: $font-price;
+    font-weight: $semibold;
+    color: $brand;
+  }
+
+  /* 放在 .coupon-row-name / -meta / -cut 之后，靠层叠顺序覆盖它们的颜色 */
+  .coupon-row-off {
+    color: $text-3;
+  }
+
+  .coupon-row-state {
+    font-size: $font-caption;
+    color: $brand;
+  }
+
+  .coupon-row-flag {
+    font-size: $font-small;
+    color: $brand;
+  }
+
+  .sheet-space {
+    height: $space-4;
+  }
+
+  /* 空状态 */
+  .empty {
+    flex: 1;
+    justify-content: center;
+    align-items: center;
+    padding: $space-6;
+  }
+
+  .empty-title {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $text-1;
+  }
+
+  .empty-desc {
+    margin-top: $space-2;
+    font-size: $font-body;
+    color: $text-3;
+    text-align: center;
+  }
+
+  .empty-btn {
+    margin-top: $space-5;
+    height: 88rpx;
+    padding-left: $space-6;
+    padding-right: $space-6;
+    border-radius: 88rpx;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-btn-text {
+    font-size: $font-body;
+    font-weight: $medium;
+    color: #FFFFFF;
+  }
+</style>

@@ -1,0 +1,142 @@
+// 购物车：只在本地存「点了什么」，不算最终价格。
+//
+// 为什么金额还是要在这里估一个：首页与菜单页底部的悬浮购物车栏要实时显示
+// 「已选 N 件 ¥xx」，而这个数字的权威来源（后端算价）在结算页才调用一次。
+// 所以这里的估算只用于悬浮栏展示，结算页与下单都以服务端返回为准，
+// 两者不一致时以后端为准——不会出现「看着 39 结果扣 45」的口径冲突。
+
+import { merchantCode } from "./session.uts";
+
+export type CartOptionSelection = {
+  groupId: number;
+  optionNames: string[];
+};
+
+export type CartLine = {
+  /** 同一菜品 + 同一规格 + 同一加料组合视为同一行 */
+  key: string;
+  dishId: number;
+  categoryId: number;
+  name: string;
+  image: string | null;
+  /** -1 表示没有规格 */
+  skuId: number;
+  skuName: string;
+  /** 加料文案，如「微辣 / 加蛋 +¥2」，直接用于列表展示 */
+  optionSummary: string;
+  selections: CartOptionSelection[];
+  /** 单份价格（含规格差价与本地估算的会员立减） */
+  unitPrice: number;
+  quantity: number;
+  /** 菜品基础价，划线价用 */
+  basePrice: number;
+};
+
+function storageKey(): string {
+  const code = merchantCode();
+  return "dc_cart_" + (code.length == 0 ? "default" : code);
+}
+
+export function cartLines(): CartLine[] {
+  const text = uni.getStorageSync(storageKey());
+  if (text == null) {
+    return [] as CartLine[];
+  }
+  const value = text as string;
+  if (value.length == 0) {
+    return [] as CartLine[];
+  }
+  const parsed = JSON.parse<CartLine[]>(value);
+  return parsed == null ? ([] as CartLine[]) : parsed;
+}
+
+function persist(lines: CartLine[]): void {
+  uni.setStorageSync(storageKey(), JSON.stringify(lines));
+  // 悬浮购物车栏在多个页面复用，改一次就广播一次，页面不必自己轮询
+  uni.$emit("cart-changed");
+}
+
+export function lineKey(dishId: number, skuId: number, selections: CartOptionSelection[]): string {
+  const signature = selections
+    .map((item) => item.groupId + ":" + item.optionNames.slice().sort().join(","))
+    .slice()
+    .sort()
+    .join("|");
+  return dishId + "#" + skuId + "#" + signature;
+}
+
+export function add(line: CartLine): void {
+  const lines = cartLines();
+  const index = lines.findIndex((item) => item.key == line.key);
+  if (index >= 0) {
+    const existing = lines[index];
+    existing.quantity += line.quantity;
+    lines.splice(index, 1, existing);
+  } else {
+    lines.push(line);
+  }
+  persist(lines);
+}
+
+/** 返回改动后该行剩余数量，页面据此决定是显示步进器还是显示加号。 */
+export function changeQuantity(key: string, delta: number): number {
+  const lines = cartLines();
+  const index = lines.findIndex((item) => item.key == key);
+  if (index < 0) {
+    return 0;
+  }
+  const line = lines[index];
+  line.quantity += delta;
+  if (line.quantity <= 0) {
+    lines.splice(index, 1);
+    persist(lines);
+    return 0;
+  }
+  lines.splice(index, 1, line);
+  persist(lines);
+  return line.quantity;
+}
+
+export function quantityOf(key: string): number {
+  const line = cartLines().find((item) => item.key == key);
+  return line == null ? 0 : line!.quantity;
+}
+
+export function removeLine(key: string): void {
+  const lines = cartLines().filter((item) => item.key != key);
+  persist(lines);
+}
+
+export function clearCart(): void {
+  persist([] as CartLine[]);
+}
+
+export function cartCount(): number {
+  return cartLines().reduce((total, line) => total + line.quantity, 0);
+}
+
+/** 本地估算金额，只用于悬浮栏展示。 */
+export function cartAmount(): number {
+  const total = cartLines().reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
+  return Math.round(total * 100) / 100;
+}
+
+/** 提交下单/结算用的载荷，只带选择意图不带金额。 */
+export function cartItemsPayload(): UTSJSONObject[] {
+  return cartLines().map((line) => {
+    const item: UTSJSONObject = {
+      dishId: line.dishId,
+      quantity: line.quantity,
+    };
+    if (line.skuId > 0) {
+      item["skuId"] = line.skuId;
+    }
+    if (line.selections.length > 0) {
+      item["optionSelections"] = line.selections.map((selection) => {
+        const payload: UTSJSONObject = { groupId: selection.groupId, optionNames: selection.optionNames };
+        return payload;
+      });
+    }
+    return item;
+  });
+}

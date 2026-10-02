@@ -1,0 +1,5 @@
+# pnpm 包管理配置（非运行时 env 配置）：本机官方源被网络中间人拦截，统一走 npmmirror。
+# esbuild（vite 依赖）需要安装期产物、vue-demi 需要执行 postinstall 生成正确的模块入口。
+allowBuilds:
+  esbuild: true
+  vue-demi: true

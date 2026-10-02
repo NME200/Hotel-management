@@ -1,0 +1,9 @@
+// 图标资源。
+//
+// 设计规范第七章：全站统一线性图标（24×24pt、描边 1.5pt），禁止填充风与线性风混用。
+// emoji（🛒 这类）是带颜色的填充图形，所以购物车改成内嵌的线性 SVG。
+// 小程序的 image 组件不读本地 .svg 文件，这里直接用 base64 data URI。
+
+/** 购物车：描边 #1A1A1A，与文字主色同一档。 */
+export const CART_ICON =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMxQTFBMUEiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjkuNSIgY3k9IjIwIiByPSIxLjQiLz48Y2lyY2xlIGN4PSIxNyIgY3k9IjIwIiByPSIxLjQiLz48cGF0aCBkPSJNMiAzaDIuNmwyLjUgMTEuM2ExLjYgMS42IDAgMCAwIDEuNiAxLjJoOC4yYTEuNiAxLjYgMCAwIDAgMS41NS0xLjJMMjEuNSA3LjVINi4yIi8+PC9zdmc+";

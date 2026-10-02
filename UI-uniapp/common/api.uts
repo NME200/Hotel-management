@@ -1,0 +1,356 @@
+// 顾客端接口：一个函数对应一个后端端点，返回前端类型。
+//
+// 页面里不出现 url 字符串、不出现 UTSJSONObject，字段口径全部收敛在这里，
+// 后端加字段或改名时改动面只有这一个文件。
+
+import { get, post, patch, toast, wxLoginCode, ApiResult } from "./request.uts";
+import { child } from "./json.uts";
+import {
+  accessToken,
+  isLogged,
+  merchantCode,
+  saveMerchantCode,
+  saveNickname,
+  saveTokens,
+} from "./session.uts";
+import {
+  ActivityCard,
+  Benefit,
+  Checkout,
+  ClaimableCoupon,
+  Coupon,
+  DishBrief,
+  DishDetail,
+  LoginResult,
+  MemberBrief,
+  MemberCenter,
+  MenuCategory,
+  OrderBrief,
+  OrderTrace,
+  PaymentChannelOption,
+  PaymentView,
+  StoreContext,
+  parseCheckout,
+  parseClaimableList,
+  parseCouponList,
+  parseDishArray,
+  parseDishDetail,
+  parseLogin,
+  parseMember,
+  parseMemberCenter,
+  parseMenu,
+  parseOrder,
+  parseOrderList,
+  parseOrderTrace,
+  parsePayment,
+  parsePaymentChannels,
+  parseStore,
+  parseStoreList,
+  parseActivityList,
+} from "./models.uts";
+
+/** 所有顾客端接口的门店参数，缺失时提示回门店列表而不是发一个注定失败的请求。 */
+function needStore(): boolean {
+  if (merchantCode().length == 0) {
+    toast("请先选择门店");
+    return true;
+  }
+  return false;
+}
+
+/* ------------------------------ 门店 ------------------------------ */
+
+export async function fetchStores(page: number, pageSize: number, keyword: string): Promise<StoreContext[]> {
+  const query: UTSJSONObject = { page: page, pageSize: pageSize };
+  if (keyword.length > 0) {
+    query["keyword"] = keyword;
+  }
+  const result = await get("/client/stores", query);
+  return parseStoreList(result.data);
+}
+
+export async function fetchStoreContext(code: string): Promise<StoreContext | null> {
+  const result = await get("/client/context", { merchantCode: code });
+  if (result.code != 0 || result.data == null) {
+    return null;
+  }
+  return parseStore(result.data!);
+}
+
+/* ------------------------------ 菜单 ------------------------------ */
+
+export async function fetchMenu(): Promise<MenuCategory[]> {
+  if (needStore()) {
+    return [] as MenuCategory[];
+  }
+  const result = await get("/client/menu", null);
+  return parseMenu(result.data);
+}
+
+export async function fetchRecommend(): Promise<DishBrief[]> {
+  if (needStore()) {
+    return [] as DishBrief[];
+  }
+  const result = await get("/client/dishes/recommend", null);
+  return parseDishArray(result.data);
+}
+
+export async function fetchDish(id: number): Promise<DishDetail | null> {
+  if (needStore()) {
+    return null;
+  }
+  const result = await get("/client/dishes/" + id, null);
+  if (result.code != 0 || result.data == null) {
+    return null;
+  }
+  return parseDishDetail(result.data!);
+}
+
+export async function searchDishes(keyword: string): Promise<DishBrief[]> {
+  if (needStore() || keyword.length == 0) {
+    return [] as DishBrief[];
+  }
+  const result = await get("/client/dishes/search", { keyword: keyword });
+  return parseDishArray(result.data);
+}
+
+/* ------------------------------ 运营位 ------------------------------ */
+
+/** slot 取 home / mine / member；免登录接口，未定店时直接给空列表。 */
+export async function fetchActivities(slot: string): Promise<ActivityCard[]> {
+  if (needStore()) {
+    return [] as ActivityCard[];
+  }
+  const result = await get("/client/activities", { slot: slot });
+  return parseActivityList(result.data);
+}
+
+/* ------------------------------ 登录 ------------------------------ */
+
+/**
+ * 顾客登录。后端只认真实微信 code，没有模拟分支：
+ * 平台未配置 AppID/AppSecret 时会返回一句可直接展示的提示，这里透传。
+ */
+export async function login(nickname: string, avatar: string): Promise<ApiResult> {
+  if (needStore()) {
+    return { code: -1, message: "请先选择门店", data: null, status: 0 };
+  }
+  const code = await wxLoginCode();
+  if (code.length == 0) {
+    return { code: -1, message: "未拿到微信登录凭证，请在微信里打开小程序", data: null, status: 0 };
+  }
+  const body: UTSJSONObject = { code: code, merchantCode: merchantCode() };
+  if (nickname.length > 0) {
+    body["nickname"] = nickname;
+  }
+  if (avatar.length > 0) {
+    body["avatar"] = avatar;
+  }
+  const result = await post("/client/auth/login", body);
+  if (result.code == 0 && result.data != null) {
+    applyLogin(parseLogin(result.data));
+  }
+  return result;
+}
+
+function applyLogin(result: LoginResult | null): void {
+  if (result == null || result.accessToken.length == 0) {
+    return;
+  }
+  saveTokens(result.accessToken, result.refreshToken);
+  if (result.member != null) {
+    saveNickname(result.member!.nickname);
+  }
+  uni.$emit("session-changed");
+}
+
+/** 需要登录的动作统一入口：已登录直接过，未登录拉起一次登录。 */
+export async function ensureLogin(): Promise<boolean> {
+  if (isLogged()) {
+    return true;
+  }
+  const result = await login("", "");
+  if (result.code != 0) {
+    toast(result.message);
+    return false;
+  }
+  return true;
+}
+
+export async function fetchMe(): Promise<LoginResult | null> {
+  const result = await get("/client/auth/me", null);
+  if (result.code != 0 || result.data == null) {
+    return null;
+  }
+  const data = result.data!;
+  return {
+    accessToken: "",
+    refreshToken: "",
+    isNewMember: false,
+    member: parseMember(child(data, "member")),
+    store: child(data, "store") == null ? null : parseStore(child(data, "store")!),
+  } as LoginResult;
+}
+
+export async function logout(): Promise<void> {
+  if (!isLogged()) {
+    return;
+  }
+  await post("/client/auth/logout", null);
+  saveTokens("", "");
+}
+
+/* ------------------------------ 会员 ------------------------------ */
+
+export async function fetchMember(): Promise<MemberBrief | null> {
+  if (!isLogged()) {
+    return null;
+  }
+  const result = await get("/client/member", null);
+  return parseMember(result.data);
+}
+
+export async function fetchMemberCenter(): Promise<MemberCenter | null> {
+  if (!isLogged()) {
+    return null;
+  }
+  const result = await get("/client/member/center", null);
+  return parseMemberCenter(result.data);
+}
+
+export async function updateProfile(nickname: string, phone: string): Promise<ApiResult> {
+  const body: UTSJSONObject = {};
+  if (nickname.length > 0) {
+    body["nickname"] = nickname;
+  }
+  if (phone.length > 0) {
+    body["phone"] = phone;
+  }
+  return await patch("/client/member/profile", body);
+}
+
+/* ------------------------------ 优惠券 ------------------------------ */
+
+export async function fetchCoupons(status: string): Promise<Coupon[]> {
+  if (!isLogged()) {
+    return [] as Coupon[];
+  }
+  const result = await get("/client/coupons/mine", { status: status });
+  return parseCouponList(result.data);
+}
+
+export async function fetchCouponCounts(): Promise<UTSJSONObject | null> {
+  if (!isLogged()) {
+    return null;
+  }
+  const result = await get("/client/coupons/counts", null);
+  return result.data;
+}
+
+export async function fetchClaimableCoupons(): Promise<ClaimableCoupon[]> {
+  if (!isLogged()) {
+    return [] as ClaimableCoupon[];
+  }
+  const result = await get("/client/coupons/claimable", null);
+  return parseClaimableList(result.data);
+}
+
+export async function claimCoupon(templateId: number): Promise<ApiResult> {
+  return await post("/client/coupons/claim", { templateId: templateId });
+}
+
+export async function redeemCoupon(code: string): Promise<ApiResult> {
+  return await post("/client/coupons/redeem", { code: code });
+}
+
+/* ------------------------------ 订单 ------------------------------ */
+
+export async function checkout(dineType: string, items: UTSJSONObject[], couponId: number): Promise<Checkout | null> {
+  const body: UTSJSONObject = { dineType: dineType, items: items };
+  if (couponId > 0) {
+    body["couponId"] = couponId;
+  }
+  const result = await post("/client/orders/checkout", body);
+  return parseCheckout(result.data);
+}
+
+export async function createOrder(
+  dineType: string,
+  items: UTSJSONObject[],
+  couponId: number,
+  tableNo: string,
+  remark: string,
+): Promise<{ order: OrderBrief | null, message: string }> {
+  const body: UTSJSONObject = { dineType: dineType, items: items, peopleCount: 1 };
+  if (couponId > 0) {
+    body["couponId"] = couponId;
+  }
+  if (tableNo.length > 0) {
+    body["tableNo"] = tableNo;
+  }
+  if (remark.length > 0) {
+    body["remark"] = remark;
+  }
+  const result = await post("/client/orders", body);
+  if (result.code != 0 || result.data == null) {
+    return { order: null, message: result.message };
+  }
+  return { order: parseOrder(result.data!), message: "" };
+}
+
+export async function fetchOrders(status: string, page: number): Promise<OrderBrief[]> {
+  if (!isLogged()) {
+    return [] as OrderBrief[];
+  }
+  const query: UTSJSONObject = { page: page, pageSize: 10 };
+  if (status.length > 0) {
+    query["status"] = status;
+  }
+  const result = await get("/client/orders", query);
+  return parseOrderList(result.data);
+}
+
+export async function fetchOrder(orderNo: string): Promise<OrderTrace | null> {
+  if (orderNo.length == 0) {
+    return null;
+  }
+  const result = await get("/client/orders/" + orderNo, null);
+  if (result.code != 0 || result.data == null) {
+    return null;
+  }
+  return parseOrderTrace(result.data!);
+}
+
+export async function cancelOrder(orderNo: string, reason: string): Promise<ApiResult> {
+  const body: UTSJSONObject = {};
+  if (reason.length > 0) {
+    body["reason"] = reason;
+  }
+  return await post("/client/orders/" + orderNo + "/cancel", body);
+}
+
+/* ------------------------------ 支付 ------------------------------ */
+
+export async function fetchPaymentChannels(): Promise<PaymentChannelOption[]> {
+  const result = await get("/client/payments/channels", null);
+  return parsePaymentChannels(result.data);
+}
+
+export async function createPayment(orderNo: string, channel: string): Promise<PaymentView | null> {
+  const result = await post("/client/payments", { orderNo: orderNo, channel: channel });
+  if (result.code != 0 || result.data == null) {
+    toast(result.message);
+    return null;
+  }
+  return parsePayment(result.data);
+}
+
+export async function fetchPaymentStatus(paymentNo: string): Promise<PaymentView | null> {
+  const result = await get("/client/payments/" + paymentNo, null);
+  if (result.code != 0 || result.data == null) {
+    return null;
+  }
+  return parsePayment(result.data);
+}
+
+export { saveMerchantCode };

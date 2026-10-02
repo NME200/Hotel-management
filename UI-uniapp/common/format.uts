@@ -1,0 +1,54 @@
+// 展示层文案：金额、数量、日期。
+// 所有金额都来自后端（单位元），这里只做「去掉无意义的尾零」这一件事，
+// 不参与任何计算——算价永远在后端。
+
+/** 68 → "68"，68.5 → "68.50"，68.499 → "68.50"。 */
+export function amountText(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  if (rounded == Math.floor(rounded)) {
+    return "" + Math.floor(rounded);
+  }
+  return rounded.toFixed(2);
+}
+
+/** 带 ¥ 前缀的完整金额，用于合计与券面。 */
+export function moneyText(value: number): string {
+  return "¥" + amountText(value);
+}
+
+/** ISO 时间串取「月-日 时:分」，秒对顾客没有意义。 */
+export function shortTime(iso: string | null): string {
+  if (iso == null || iso.length < 16) {
+    return "";
+  }
+  return iso.substring(5, 10) + " " + iso.substring(11, 16);
+}
+
+export function dateOnly(iso: string | null): string {
+  if (iso == null || iso.length < 10) {
+    return "";
+  }
+  return iso.substring(0, 10);
+}
+
+/** 剩余秒数 → 「还有 12:30」，用于支付倒计时。 */
+export function countdownText(seconds: number): string {
+  if (seconds <= 0) {
+    return "已超时";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return "剩 " + minutes + ":" + (rest < 10 ? "0" + rest : "" + rest);
+}
+
+export function salesText(count: number): string {
+  return "已售 " + count;
+}
+
+/** 营业时间数组拼成一行，后端存的是 ["10:00-14:00","17:00-21:30"]。 */
+export function hoursText(hours: string[]): string {
+  if (hours.length == 0) {
+    return "营业时间未设置";
+  }
+  return "营业时间 " + hours.join("、");
+}
