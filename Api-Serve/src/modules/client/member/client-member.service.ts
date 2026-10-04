@@ -10,6 +10,7 @@ import { memberDayInfo } from '../../../common/constants/member-program';
 import { BusinessException } from '../../../common/exceptions/business.exception';
 import { TenantRepo } from '../../../common/repository/tenant.repo';
 import { maskPhone } from '../../../common/utils/mask.util';
+import { Customer } from '../../../database/entities/customer.entity';
 import { Member } from '../../../database/entities/member.entity';
 import { MemberCoupon } from '../../../database/entities/member-coupon.entity';
 import { MemberGrowthService } from '../../member-growth/member-growth.service';
@@ -28,6 +29,9 @@ import type {
 /**
  * 顾客端的「我是谁」：个人中心三项数据与会员中心页一整套视图都从这里出。
  *
+ * 一份视图要跨两张表拼：昵称/头像/手机号来自 customer（跨店同一个），
+ * 等级/成长值/积分/余额/券来自 member（每家店各一份）。
+ *
  * 等级不人工维护：只要 growth_value 变化，读出来的 levelLabel / nextLevel /
  * 进度就跟着变，前端不需要也不允许自己判断档位。
  */
@@ -38,6 +42,7 @@ export class ClientMemberService {
 
   constructor(
     @InjectRepository(Member) private readonly memberRepository: Repository<Member>,
+    @InjectRepository(Customer) private readonly customerRepository: Repository<Customer>,
     @InjectRepository(MemberCoupon) couponRepository: Repository<MemberCoupon>,
     private readonly growth: MemberGrowthService,
   ) {
@@ -45,54 +50,49 @@ export class ClientMemberService {
     this.coupons = new TenantRepo(couponRepository);
   }
 
-  /** 刷新令牌时只有会员 ID（租户键在会员行上），这里按主键取一次。 */
-  async requireMember(memberId: number): Promise<Member> {
-    const member = await this.memberRepository.findOne({ where: { id: memberId } });
-    if (!member) {
-      throw BusinessException.notFound('会员不存在或已删除');
-    }
-    return member;
-  }
-
   async brief(merchantId: number, memberId: number): Promise<ClientMemberBrief> {
-    const member = await this.members.findById(merchantId, memberId);
-    return this.toBrief(member, await this.couponCounts(merchantId, memberId));
+    const { member, customer } = await this.load(merchantId, memberId);
+    return this.toBrief(member, customer, await this.couponCounts(merchantId, memberId));
   }
 
   async center(merchantId: number, memberId: number): Promise<ClientMemberCenter> {
-    const member = await this.members.findById(merchantId, memberId);
+    const { member, customer } = await this.load(merchantId, memberId);
     const counts = await this.couponCounts(merchantId, memberId);
-    const brief = this.toBrief(member, counts);
+    const brief = this.toBrief(member, customer, counts);
     return {
       member: brief,
       // 权益跟着卡片上那一档走，不能各读各的：否则会出现「钻石会员」配绿卡权益
       benefits: [...MEMBER_BENEFITS[brief.level]],
-      tasks: buildGrowthTasks(member.orderCount, counts.used, Boolean(member.phone)),
+      tasks: buildGrowthTasks(member.orderCount, counts.used, Boolean(customer.phone)),
       memberDay: memberDayInfo(),
     };
   }
 
+  /**
+   * 完善资料：昵称/头像/性别/手机号写在 customer 上，一次修改所有门店同步生效；
+   * 「完善资料送成长值」仍是本店的活动，所以发奖落在本店的会员档案上。
+   */
   async updateProfile(
     merchantId: number,
     memberId: number,
     dto: UpdateClientProfileDto,
   ): Promise<ClientMemberBrief> {
-    const before = await this.members.findById(merchantId, memberId);
+    const { member, customer } = await this.load(merchantId, memberId);
     const phone = dto.phone?.trim() || null;
 
-    // 手机号是会员与门店之间的锚点（券、储值都挂在手机号上），一旦绑定就不允许自助改
-    if (before.phone && phone && before.phone !== phone) {
+    // 手机号是顾客与门店之间的锚点（券、储值都挂在它上面），一旦绑定就不允许自助改
+    if (customer.phone && phone && customer.phone !== phone) {
       throw BusinessException.badRequest('手机号已绑定，如需更换请联系门店');
     }
 
-    const saved = await this.members.update(merchantId, memberId, {
+    await this.customerRepository.update(customer.id, {
       ...(dto.nickname?.trim() ? { nickname: dto.nickname.trim() } : {}),
       ...(dto.avatar?.trim() ? { avatar: dto.avatar.trim() } : {}),
       ...(dto.gender ? { gender: dto.gender } : {}),
       ...(phone ? { phone } : {}),
     });
 
-    await this.growth.creditProfileCompleted(merchantId, memberId, before.phone, saved.phone);
+    await this.growth.creditProfileCompleted(merchantId, memberId, customer.phone, phone);
     return this.brief(merchantId, memberId);
   }
 
@@ -108,8 +108,12 @@ export class ClientMemberService {
     return { unused, used };
   }
 
-  /** 会员档案装配。冷启动恢复会话时已经有会员实体，直接复用这里避免重复查库。 */
-  toBrief(member: Member, counts: { unused: number; used: number }): ClientMemberBrief {
+  /** 会员档案装配。调用方已经带着 customer 时用这里，避免重复查库。 */
+  toBrief(
+    member: Member,
+    customer: Customer,
+    counts: { unused: number; used: number },
+  ): ClientMemberBrief {
     const rule = levelByGrowth(member.growthValue);
     const next = nextLevelOf(rule.level);
     const nextLevel: MemberLevelProgress | null = next
@@ -123,11 +127,12 @@ export class ClientMemberService {
 
     return {
       id: member.id,
-      nickname: member.nickname,
-      avatar: member.avatar,
-      gender: member.gender,
-      phone: member.phone,
-      phoneMasked: maskPhone(member.phone),
+      customerId: customer.id,
+      nickname: customer.nickname,
+      avatar: customer.avatar,
+      gender: customer.gender,
+      phone: customer.phone,
+      phoneMasked: maskPhone(customer.phone),
       level: rule.level,
       // 等级一律由成长值反推：member.level 只是发奖时同步的冗余列，
       // 一旦历史数据和阈值表对不上，卡片就会出现「钻石会员 / 还需 510 升银卡」这种自相矛盾。
@@ -141,6 +146,19 @@ export class ClientMemberService {
       nextLevel,
       levelProgress: progressRatio(member.growthValue, rule.threshold, next?.threshold ?? null),
     };
+  }
+
+  /** 会员档案与它的顾客身份一起取；跨店读别人的档案在这里就断掉。 */
+  private async load(merchantId: number, memberId: number): Promise<{
+    member: Member;
+    customer: Customer;
+  }> {
+    const member = await this.members.findById(merchantId, memberId);
+    const customer = await this.customerRepository.findOne({ where: { id: member.customerId } });
+    if (!customer) {
+      throw BusinessException.notFound('顾客账号不存在');
+    }
+    return { member, customer };
   }
 }
 

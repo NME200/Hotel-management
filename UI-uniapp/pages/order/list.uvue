@@ -25,6 +25,8 @@
       @refresherrefresh="onRefresh"
     >
       <view v-for="item in orders" :key="item.orderNo" class="order-card" @click="openTrace(item.orderNo)">
+        <!-- 账号跨门店，列表混着各家的单，先说清楚这是哪一家店的 -->
+        <text v-if="item.storeName != null" class="order-store">{{ item.storeName! }}</text>
         <view class="card-head">
           <text class="order-no">{{ '订单号 ' + item.orderNo }}</text>
           <view :class="tagClass(item)">
@@ -74,7 +76,7 @@
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
   import { ensureLogin, fetchOrders } from '../../common/api.uts'
-  import { isLogged } from '../../common/session.uts'
+  import { isLogged, merchantCode, saveMerchantCode } from '../../common/session.uts'
   import { OrderBrief } from '../../common/models.uts'
   import { amountText, shortTime } from '../../common/format.uts'
   import { toast } from '../../common/request.uts'
@@ -193,6 +195,17 @@
       toast('这笔订单还不能再来一单')
       return
     }
+    // 跨门店列表里可能点的是别家的单：先切到那家店再进点餐页。
+    // 令牌不再绑门店，所以切店只是换一个本地编号，不用重新登录。
+    const code = item.storeCode
+    const name = item.storeName
+    if (code != null && !(code! == merchantCode())) {
+      saveMerchantCode(code!)
+      uni.$emit('session-changed')
+      toast('已切到「' + (name == null ? '这家店' : name!) + '」，请重新选择菜品与规格')
+      uni.switchTab({ url: '/pages/menu/menu' })
+      return
+    }
     // 不做「自动加回购物车」：明细里的 skuId/加料组合与购物车分组 id 对不上，做不到就不承诺
     toast('已跳到点餐页，请重新选择菜品与规格')
     uni.switchTab({ url: '/pages/menu/menu' })
@@ -278,6 +291,15 @@
     background-color: $card-bg;
     border-radius: $radius-card;
     box-shadow: $shadow-card;
+  }
+
+  .order-store {
+    margin-bottom: $space-2;
+    font-size: $font-body;
+    font-weight: $medium;
+    color: $text-1;
+    lines: 1;
+    text-overflow: ellipsis;
   }
 
   .card-head {

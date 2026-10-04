@@ -134,7 +134,13 @@ async function main() {
   check('带规格的菜标记 needChoose', 'true', String(dishesA.every((dish) => dish.needChoose === true || dish.skuCount === 0)));
   check('两店菜品 ID 不交叉', 'true', String(dishesA.every((dish) => !dishesB.some((other) => other.id === dish.id))));
   const seedImage = dishesA.find((dish) => dish.name === '水煮牛肉');
-  check('演示菜品已回填本地图片', '/static/dish/dish-01.jpg', seedImage === undefined ? 'none' : seedImage.image);
+  // 本站相对路径就算合格：/static/dish/ 是种子里的本地图，/uploads/ 是商家自己上传的图，
+  // 两种小程序都能直接 <image> 显示；要挡的是依赖外部 CDN 的外链。
+  check(
+    '演示菜品用的是本站图片',
+    'true',
+    String(seedImage !== undefined && /^\/(static|uploads)\//.test(String(seedImage.image))),
+  );
 
   const dishId = dishesA[0].id;
   const own = await req('GET', `/client/dishes/${dishId}?merchantCode=M10001`);

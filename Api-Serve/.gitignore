@@ -12,5 +12,7 @@ logs/
 !.vscode/extensions.json
 coverage/
 tmp/
+# 商户上传的图片，属于本机数据不是代码
+uploads/
 # 手工调试时随手落的请求体
 .tmp-*

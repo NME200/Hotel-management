@@ -11,18 +11,18 @@ import { MerchantStaff } from '../../database/entities/merchant-staff.entity';
 import { Order } from '../../database/entities/order.entity';
 import { DishQueryDto, type DishBrief } from '../merchant/dish/dto/dish.dto';
 import { DishService } from '../merchant/dish/dish.service';
-import { MemberQueryDto } from '../merchant/member/dto/member.dto';
-import { MemberService } from '../merchant/member/member.service';
 import { OrderQueryDto, type OrderBrief } from '../merchant/order/dto/order.dto';
 import { OrderService } from '../merchant/order/order.service';
 import { StaffQueryDto, type StaffView } from '../merchant/staff/dto/staff.dto';
 import { StaffService } from '../merchant/staff/staff.service';
+import { MemberProfileQueryDto } from './member/dto/member.dto';
+import { MemberProfileRow, PlatformMemberService } from './member/member.service';
 import type { MerchantStatistics } from './models/merchant-view.model';
 
 /**
  * 平台端商户数据只读穿透：客服排障时按商户 ID 查看其经营数据。
- * 查询完全复用商家端 service，只是把租户键从"登录态"换成"路径参数 + 商户存在性校验"，
- * 两端字段结构因此天然一致，不会漂移出两套实现。
+ * 菜品/订单/员工复用商家端 service，只是把租户键从"登录态"换成"路径参数 + 商户存在性校验"；
+ * 会员走平台端会员模块——商家端已经没有会员模块了，顾客账号本来就跨店。
  */
 @Injectable()
 export class MerchantViewService {
@@ -34,8 +34,8 @@ export class MerchantViewService {
     @InjectRepository(MerchantStaff) private readonly staffs: Repository<MerchantStaff>,
     private readonly dishService: DishService,
     private readonly orderService: OrderService,
-    private readonly memberService: MemberService,
     private readonly staffService: StaffService,
+    private readonly memberView: PlatformMemberService,
   ) {}
 
   async dishesOf(merchantId: number, query: DishQueryDto): Promise<PageResult<DishBrief>> {
@@ -46,8 +46,12 @@ export class MerchantViewService {
     return this.orderService.page(await this.assertMerchant(merchantId), query);
   }
 
-  async membersOf(merchantId: number, query: MemberQueryDto): Promise<PageResult<Member>> {
-    return this.memberService.page(await this.assertMerchant(merchantId), query);
+  async membersOf(
+    merchantId: number,
+    query: MemberProfileQueryDto,
+  ): Promise<PageResult<MemberProfileRow>> {
+    await this.assertMerchant(merchantId);
+    return this.memberView.pageProfiles({ ...query, merchantId });
   }
 
   async staffsOf(merchantId: number, query: StaffQueryDto): Promise<PageResult<StaffView>> {

@@ -1,0 +1,108 @@
+# =============================================================================
+# 后端单独进 Docker（与 1Panel 共存，前端不进容器）
+#
+# 与仓库根那份 docker-compose.yml 的差别只有三处：
+#   1. 不起 MySQL / Redis —— 用 1Panel 已经装好的那两个实例（它通常已占着 3306 与 6379，
+#      再起一套既是重复的内存开销，也要额外错开端口）；
+#   2. 不起三个前端 —— 前端按《部署教程.md》当静态站交给 1Panel 的 OpenResty 托管；
+#   3. 容器接进 1panel-network，所以 1Panel 的反向代理目标可以直接写
+#      http://ye-dc-api:8000。这也正是「proxy_pass 写 127.0.0.1 打不通」的正解：
+#      容器的 127.0.0.1 是它自己，不是宿主机。
+#
+# 用法（WSL Ubuntu 里，仓库根目录执行）：
+#   docker compose -f deploy/compose.backend.yml up -d --build                      # 建表 + 起服务
+#   docker compose -f deploy/compose.backend.yml --profile tools run --rm seed      # 灌演示数据
+#   docker compose -f deploy/compose.backend.yml logs -f api                        # 看日志
+# =============================================================================
+
+name: ye-dc-backend
+
+# 时区必须显式给：TypeORM 与 mysql2 都按 timezone: 'local' 处理时间
+# （见 Api-Serve/src/app.module.ts 与 database/data-source.ts），
+# 而 node:22-alpine 运行时默认 UTC。不设这一条，「今日订单」的日界会整整偏 8 小时，
+# 表现是看板统计与订单时间对不上，且只在服务器上复现不了。
+x-runtime: &runtime
+  TZ: Asia/Shanghai
+
+services:
+  # 一次性任务：把表结构推到位就自行退出。刻意不塞进 api 的启动流程——
+  # 多副本同时启动并发跑迁移会互相锁表甚至改坏结构。
+  migrate:
+    build:
+      context: ../Api-Serve
+    image: ye-dc/api-serve:latest
+    env_file: .env
+    environment: *runtime
+    command:
+      [
+        'node',
+        './node_modules/typeorm/cli.js',
+        'migration:run',
+        '-d',
+        'dist/database/data-source.js',
+      ]
+    # Linux/WSL 的 Docker 不会自动提供 host.docker.internal，这里显式映射到宿主机网关：
+    # .env 里的 DB_HOST/REDIS_HOST 因此能用一个与网桥 IP 无关的稳定名字（172.x.x.x 重启会变）
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    networks: [onepanel]
+    restart: 'no'
+
+  api:
+    build:
+      context: ../Api-Serve
+    image: ye-dc/api-serve:latest
+    # 固定容器名：1Panel 反向代理就填 http://ye-dc-api:8000
+    container_name: ye-dc-api
+    env_file: .env
+    environment: *runtime
+    volumes:
+      # UPLOAD_DRIVER=local 时菜品图与小票二维码落在这里。
+      # 用命名卷而不是 bind 挂载：运行镜像里 /app/uploads 属于 node(uid 1000)，
+      # bind 挂载会把宿主机目录的属主盖上去，届时上传会以 EACCES 失败。
+      - uploads:/app/uploads
+    ports:
+      # 只绑回环，便于在 WSL/Windows 上直接 curl；对外流量一律走 1Panel 的 OpenResty
+      - '127.0.0.1:8000:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Linux/WSL 的 Docker 不会自动提供 host.docker.internal，这里显式映射到宿主机网关：
+    # .env 里的 DB_HOST/REDIS_HOST 因此能用一个与网桥 IP 无关的稳定名字（172.x.x.x 重启会变）
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    networks: [onepanel]
+    restart: unless-stopped
+
+  # 演示数据：只在需要验收界面时手动跑一次。
+  # 脚本按商户 code 幂等（已存在就 skipped），重复执行不会灌出两份。
+  seed:
+    build:
+      context: ../Api-Serve
+      # 种脚本 src/database/seeds/run-seed.ts 要吃 ts-node 与 src/，
+      # 而生产运行镜像刻意两者都不带（只留 dist + 生产依赖）。
+      # 所以复用 Dockerfile 的 builder 阶段，而不是给运行镜像装回 devDependencies。
+      target: builder
+    image: ye-dc/api-serve:tools
+    env_file: .env
+    environment: *runtime
+    command: ['pnpm', 'db:seed']
+    # Linux/WSL 的 Docker 不会自动提供 host.docker.internal，这里显式映射到宿主机网关：
+    # .env 里的 DB_HOST/REDIS_HOST 因此能用一个与网桥 IP 无关的稳定名字（172.x.x.x 重启会变）
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    networks: [onepanel]
+    # profile 的意义：不写 --profile tools 时，up 不会带上它，
+    # 免得哪天手一抖往生产库里灌演示数据
+    profiles: ['tools']
+    restart: 'no'
+
+volumes:
+  uploads:
+
+networks:
+  # 1Panel 的容器网络。名字以 `docker network ls | grep 1panel` 实际输出为准；
+  # external: true 表示这份 compose 不创建它，不存在时会直接报错（比静默新建一个好排查）
+  onepanel:
+    name: 1panel-network
+    external: true

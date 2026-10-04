@@ -4,17 +4,14 @@
 // 失败沿用 HTTP 语义码。这里把两层判断（HTTP 状态 + 业务 code）压成一次调用结果，
 // 页面只需要关心「拿到数据了吗」。
 //
-// 前端不做环境区分（DESIGN.md 明确要求按生产级别开发），
-// 因此只有一个 API_BASE_URL 常量：上线前改成正式 https 域名，
-// 并在小程序后台把该域名配进 request 合法域名列表。
+// 前端不做环境区分（DESIGN.md 明确要求按生产级别开发），所以没有 env 文件：
+// 后端地址只有一个常量，放在 api/request.uts，换环境只改那一处。
 //
 // 所有字段读取都用下标 obj[key]：uni.request 的 res.data 运行时是普通对象，
 // 调 getString/getJSONObject 会在小程序端抛 not a function（见 common/json.uts 同款说明）。
 
 import { accessToken, refreshToken, clearSession, saveTokens, merchantCode } from "./session.uts";
-
-/** 本机验收地址：微信开发者工具需勾选「不校验合法域名、web-view、TLS 版本以及 HTTPS 证书」。 */
-export const API_BASE_URL = "http://127.0.0.1:8000/api/v1";
+import { API_BASE_URL } from "../api/request.uts";
 
 export type ApiResult = {
   /** 0 表示成功；非 0 时 message 可直接展示给顾客 */

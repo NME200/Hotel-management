@@ -108,7 +108,7 @@ export class ClientPaymentService {
     return order;
   }
 
-  /** 微信 JSAPI 必须有本门店的 openid；拿不到就说明登录态不完整，直接拒绝而不是发一注定失败的单。 */
+  /** 微信 JSAPI 必须有 openid；拿不到就说明登录态不完整，直接拒绝而不是发一注定失败的单。 */
   private async payerOpenid(
     merchantId: number,
     memberId: number,
@@ -117,10 +117,13 @@ export class ClientPaymentService {
     if (channel !== 'wechat') {
       return undefined;
     }
-    const member = await this.members.findById(merchantId, memberId);
-    if (!member.openid) {
+    const member = await this.members.findById(merchantId, memberId, {
+      relations: { customer: true },
+    });
+    const openid = member.customer.openid;
+    if (!openid) {
       throw BusinessException.badRequest('当前登录未完成微信授权，无法使用微信支付');
     }
-    return member.openid;
+    return openid;
   }
 }

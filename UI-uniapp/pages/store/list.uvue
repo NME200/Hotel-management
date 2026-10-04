@@ -54,7 +54,7 @@
 
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
-  import { merchantCode, saveMerchantCode } from '../../common/session.uts'
+  import { merchantCode, saveMerchantCode, clearTable } from '../../common/session.uts'
   import { fetchStores } from '../../common/api.uts'
   import { StoreContext } from '../../common/models.uts'
   import { hoursText } from '../../common/format.uts'
@@ -110,9 +110,13 @@
     loading.value = false
   }
 
-  /** 换店只写商户编号：购物车按 dc_cart_<merchantCode> 分仓，不会串店。 */
+  /**
+   * 换店只写商户编号：购物车按 dc_cart_<merchantCode> 分仓，不会串店。
+   * 同时清掉桌位 —— 从列表进的店没有扫过任何桌码，带着上一家店的桌号下单会下错桌。
+   */
   function choose(store: StoreContext) : void {
     saveMerchantCode(store.merchantCode)
+    clearTable()
     uni.reLaunch({ url: '/pages/index/index' })
   }
 

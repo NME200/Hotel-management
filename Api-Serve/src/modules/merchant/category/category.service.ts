@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Like, type FindOptionsWhere, type Repository } from 'typeorm';
 import { BusinessException } from '../../../common/exceptions/business.exception';
 import { TenantRepo } from '../../../common/repository/tenant.repo';
+import { CacheKey } from '../../../common/constants/cache-key';
+import { RedisService } from '../../redis/redis.service';
 import { likePattern } from '../../../common/utils/like.util';
 import { buildPageResult, type PageResult } from '../../../common/dto/page-result.dto';
 import { Category } from '../../../database/entities/category.entity';
@@ -22,9 +24,15 @@ export class CategoryService {
   constructor(
     @InjectRepository(Category) categoryRepository: Repository<Category>,
     @InjectRepository(Dish) dishRepository: Repository<Dish>,
+    private readonly redis: RedisService,
   ) {
     this.categories = new TenantRepo(categoryRepository);
     this.dishes = new TenantRepo(dishRepository);
+  }
+
+  /** 分类改名或停用会连带改变顾客端菜单结构，改完必须清掉门店菜单缓存。 */
+  private invalidateClientMenu(merchantId: number): Promise<unknown> {
+    return this.redis.del(CacheKey.clientMenu(merchantId));
   }
 
   async page(merchantId: number, query: CategoryQueryDto): Promise<PageResult<CategoryItem>> {
@@ -54,7 +62,9 @@ export class CategoryService {
     if (await this.categories.exists(merchantId, { name: dto.name })) {
       throw BusinessException.conflict('同名分类已存在');
     }
-    return this.categories.create(merchantId, dto);
+    const created = await this.categories.create(merchantId, dto);
+    await this.invalidateClientMenu(merchantId);
+    return created;
   }
 
   async update(merchantId: number, id: number, dto: UpdateCategoryDto): Promise<Category> {
@@ -64,7 +74,9 @@ export class CategoryService {
         throw BusinessException.conflict('同名分类已存在');
       }
     }
-    return this.categories.update(merchantId, id, dto);
+    const saved = await this.categories.update(merchantId, id, dto);
+    await this.invalidateClientMenu(merchantId);
+    return saved;
   }
 
   async remove(merchantId: number, id: number): Promise<void> {
@@ -74,6 +86,7 @@ export class CategoryService {
       throw BusinessException.conflict(`该分类下有 ${used} 个菜品，请先删除或移出`);
     }
     await this.categories.removeEntity(category);
+    await this.invalidateClientMenu(merchantId);
   }
 
   /** 一次查询拿到菜品所属分类，避免按分类循环 count。 */

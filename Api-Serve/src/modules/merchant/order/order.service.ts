@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Between,
@@ -11,7 +11,7 @@ import {
   type FindOptionsWhere,
   type Repository,
 } from 'typeorm';
-import { OrderStatus } from '../../../common/constants/dict';
+import { OrderStatus, PayStatus } from '../../../common/constants/dict';
 import { buildPageResult, type PageResult } from '../../../common/dto/page-result.dto';
 import { BusinessException } from '../../../common/exceptions/business.exception';
 import { TenantRepo } from '../../../common/repository/tenant.repo';
@@ -19,6 +19,9 @@ import { likePattern } from '../../../common/utils/like.util';
 import { Dish } from '../../../database/entities/dish.entity';
 import { Member } from '../../../database/entities/member.entity';
 import { MemberGrowthService } from '../../member-growth/member-growth.service';
+// 值导入：Nest 需要在启动时解析 PrintService 这一构造函数依赖，
+// 用 `import type` 编译能过，但启动时会报 can't resolve dependency。
+import { PrintService } from '../print/print.service';
 import { Order } from '../../../database/entities/order.entity';
 import { OrderItem } from '../../../database/entities/order-item.entity';
 import {
@@ -44,6 +47,7 @@ const TERMINAL_STATUSES: readonly OrderStatus[] = [OrderStatus.Cancelled, OrderS
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
   private readonly orders: TenantRepo<Order>;
   private readonly items: TenantRepo<OrderItem>;
   private readonly dishes: TenantRepo<Dish>;
@@ -56,6 +60,7 @@ export class OrderService {
     @InjectRepository(Dish) dishRepository: Repository<Dish>,
     @InjectRepository(Member) memberRepository: Repository<Member>,
     private readonly growth: MemberGrowthService,
+    private readonly print: PrintService,
   ) {
     this.orders = new TenantRepo(orderRepository);
     this.items = new TenantRepo(itemRepository);
@@ -138,7 +143,39 @@ export class OrderService {
       return saved;
     });
 
+    // 自动打印放在事务之外：出纸是硬件动作，打不出来不能把订单流转一起回滚。
+    // PrintService 内部已吞掉「未开启自动打印 / 没配打印机」两种情况。
+    await this.triggerAutoPrint(merchantId, id, dto.status);
+
     return { ...this.toBrief(updated), items: updated.items ?? [] };
+  }
+
+  /**
+   * 按门店配置的出票时机触发自动打印。
+   *
+   * 任何异常都只记日志不抛出：订单已经流转成功了，
+   * 因为打印机没插电就让接口报错，收银台会以为订单没接上而重复操作。
+   */
+  private async triggerAutoPrint(
+    merchantId: number,
+    orderId: number,
+    status: OrderStatus,
+  ): Promise<void> {
+    const on = status === OrderStatus.Accepted
+      ? OrderStatus.Accepted
+      : status === OrderStatus.Ready
+        ? OrderStatus.Ready
+        : null;
+    if (!on) {
+      return;
+    }
+    try {
+      await this.print.autoPrintForOrder(merchantId, orderId, on);
+    } catch (error) {
+      this.logger.warn(
+        `订单 ${orderId} 自动打印失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** 完成订单时累计菜品销量与会员消费数据，保证看板与会员画像有真实来源。 */
@@ -182,17 +219,22 @@ export class OrderService {
     const range = this.dateRange(query);
     const orders = await this.orders.list(merchantId, {
       where: range,
-      select: { id: true, status: true, payAmount: true },
+      select: { id: true, status: true, payStatus: true, payAmount: true },
     });
 
     let turnover = 0;
     let pendingCount = 0;
     let completedCount = 0;
     let cancelledCount = 0;
+    let unpaidCount = 0;
 
     for (const order of orders) {
       if (!TERMINAL_STATUSES.includes(order.status)) {
         turnover += order.payAmount;
+      }
+      // 待收款只看「还活着且没收到钱」的单：取消/退款的单不该再催收银员去收款
+      if (order.payStatus === PayStatus.Unpaid && !TERMINAL_STATUSES.includes(order.status)) {
+        unpaidCount += 1;
       }
       if (order.status === OrderStatus.Pending) {
         pendingCount += 1;
@@ -212,6 +254,7 @@ export class OrderService {
       pendingCount,
       completedCount,
       cancelledCount,
+      unpaidCount,
     };
   }
 

@@ -12,7 +12,10 @@ export interface MemberLevelProgress {
 }
 
 export interface ClientMemberBrief {
+  /** 本店会员档案 ID（member.id）：下单、券这些本店数据都挂在它上面 */
   id: number;
+  /** 顾客身份 ID（customer.id）：跨门店稳定，切换门店时不变 */
+  customerId: number;
   nickname: string;
   avatar: string | null;
   gender: Gender;

@@ -9,6 +9,8 @@ import {
   type Repository,
 } from 'typeorm';
 import { DishStatus, OptionGroupType, StockType } from '../../../common/constants/dict';
+import { CacheKey } from '../../../common/constants/cache-key';
+import { RedisService } from '../../redis/redis.service';
 import type { PageResult } from '../../../common/dto/page-result.dto';
 import { TenantRepo } from '../../../common/repository/tenant.repo';
 import { likePattern } from '../../../common/utils/like.util';
@@ -56,6 +58,7 @@ export class DishService {
 
   constructor(
     private readonly dataSource: DataSource,
+    private readonly redis: RedisService,
     @InjectRepository(Dish) dishRepository: Repository<Dish>,
     @InjectRepository(DishSku) skuRepository: Repository<DishSku>,
     @InjectRepository(DishOptionGroup) optionGroupRepository: Repository<DishOptionGroup>,
@@ -65,6 +68,14 @@ export class DishService {
     this.skus = new TenantRepo(skuRepository);
     this.optionGroups = new TenantRepo(optionGroupRepository);
     this.categories = new TenantRepo(categoryRepository);
+  }
+
+  /**
+   * 顾客端菜单按门店缓存在 Redis，改完菜品必须清掉，
+   * 否则商家改了图或价，小程序最长一分钟还在显示旧的。
+   */
+  private invalidateClientMenu(merchantId: number): Promise<unknown> {
+    return this.redis.del(CacheKey.clientMenu(merchantId));
   }
 
   async page(merchantId: number, query: DishQueryDto): Promise<PageResult<DishBrief>> {
@@ -83,7 +94,9 @@ export class DishService {
 
     const result = await this.dishes.page(merchantId, query, {
       where,
-      relations: { category: true },
+      // 一并取回规格与加料分组：列表要给出 needChoose 标记，
+      // 否则收银台只能「先点开弹窗再看有没有规格」，每道菜多一次往返
+      relations: { category: true, skus: true, optionGroups: true },
       order: { sort: 'ASC', id: 'DESC' },
     });
 
@@ -110,6 +123,7 @@ export class DishService {
       return dish;
     });
 
+    await this.invalidateClientMenu(merchantId);
     return this.detail(merchantId, created.id);
   }
 
@@ -124,6 +138,7 @@ export class DishService {
       await this.writeChildren(manager, merchantId, id, dto);
     });
 
+    await this.invalidateClientMenu(merchantId);
     return this.detail(merchantId, id);
   }
 
@@ -133,12 +148,14 @@ export class DishService {
     dto: UpdateDishStatusDto,
   ): Promise<DishBrief> {
     const dish = await this.dishes.update(merchantId, id, { status: dto.status });
+    await this.invalidateClientMenu(merchantId);
     return this.toBrief(dish);
   }
 
   async remove(merchantId: number, id: number): Promise<void> {
     // 规格与加料分组由数据库 ON DELETE CASCADE 一并清理
     await this.dishes.remove(merchantId, id);
+    await this.invalidateClientMenu(merchantId);
   }
 
   private async writeChildren(
@@ -199,7 +216,12 @@ export class DishService {
   }
 
   private toBrief(dish: Dish): DishBrief {
-    const { category, ...rest } = dish;
-    return { ...rest, categoryName: category?.name ?? '' };
+    const { category, skus, optionGroups, ...rest } = dish;
+    return {
+      ...rest,
+      categoryName: category?.name ?? '',
+      // 有规格或加料就必须先选清楚再加购，前端据此决定是直接加还是弹选择框
+      needChoose: (skus?.length ?? 0) > 0 || (optionGroups?.length ?? 0) > 0,
+    };
   }
 }

@@ -2,18 +2,25 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
-import { StoreStatus } from '../../../../common/constants/dict';
+import { StoreStatus, PRINT_MAX_COPIES } from '../../../../common/constants/dict';
 import { Trimmed } from '../../../../common/decorators/trimmed.decorator';
 
 const BUSINESS_HOURS_RULE = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
+
+/** 自动打印触发时机：接单后或出餐后，两者都是门店真实存在的出票习惯。 */
+const AUTO_PRINT_ON = ['accepted', 'ready'] as const;
 
 export class UpdateStoreDto {
   @ApiProperty({ description: '门店名称' })
@@ -88,4 +95,27 @@ export class UpdateStoreDto {
   @ApiProperty({ enum: [StoreStatus.Open, StoreStatus.Closed] })
   @IsIn([StoreStatus.Open, StoreStatus.Closed])
   status!: StoreStatus;
+
+  @ApiProperty({ description: '接单/出餐后是否自动打印小票', default: false })
+  @IsBoolean()
+  autoPrint!: boolean;
+
+  @ApiProperty({
+    enum: AUTO_PRINT_ON,
+    description: '自动打印触发时机 accepted=接单后 | ready=出餐后',
+    default: 'accepted',
+  })
+  @IsIn(AUTO_PRINT_ON)
+  autoPrintOn!: string;
+
+  @ApiProperty({
+    description: '顾客小票默认份数',
+    minimum: 1,
+    maximum: PRINT_MAX_COPIES,
+    default: 1,
+  })
+  @IsInt()
+  @Min(1)
+  @Max(PRINT_MAX_COPIES, { message: `单次最多打印 ${PRINT_MAX_COPIES} 份` })
+  customerCopies!: number;
 }

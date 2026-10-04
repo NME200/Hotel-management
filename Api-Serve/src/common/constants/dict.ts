@@ -1,7 +1,7 @@
 export const UserType = {
   Platform: 'platform',
   Merchant: 'merchant',
-  /** 顾客小程序登录态：租户键同样是 merchantId，但没有后台角色与权限点 */
+  /** 顾客小程序登录态：令牌只代表微信账号，门店由每次请求的 merchantCode 决定 */
   Client: 'client',
 } as const;
 export type UserType = (typeof UserType)[keyof typeof UserType];
@@ -76,6 +76,19 @@ export const DineType = {
   Pickup: 'pickup',
 } as const;
 export type DineType = (typeof DineType)[keyof typeof DineType];
+
+/**
+ * 桌位的用餐状态。与 `AccountStatus`（启用/停用）是两件事：
+ * - `AccountStatus` 管「这张桌还能不能用」（装修、包场时停用，扫码头失效）；
+ * - `TableDiningStatus` 管「这张桌此刻有没有人在吃」（收银台开台/清台）。
+ * 混成一个字段会让「停用一张正在用餐的桌」变得无法表达。
+ */
+export const TableDiningStatus = {
+  Idle: 'idle',
+  Dining: 'dining',
+} as const;
+export type TableDiningStatus =
+  (typeof TableDiningStatus)[keyof typeof TableDiningStatus];
 
 export const MemberLevel = {
   Normal: 'normal',
@@ -222,6 +235,76 @@ export const PromotionType = {
 } as const;
 export type PromotionType = (typeof PromotionType)[keyof typeof PromotionType];
 
+/* ============================ 小票打印 ============================ */
+
+/**
+ * 打印方式。两种都是商家侧真实存在的收银形态：
+ * - `browser`：收银台电脑接的热敏小票机，走浏览器打印，无需任何凭据，开箱可用；
+ * - `cloud`：飞鹅/易联云等云打印机，由后端把任务推给厂商网关，断电断网也能补打。
+ *
+ * 刻意不做「本地代理直连 IP」这种写法：门店内网地址不可控，
+ * 一旦收银机换网段整条链路就断，排查成本远高于收益。
+ */
+export const PrintMode = {
+  Browser: 'browser',
+  Cloud: 'cloud',
+} as const;
+export type PrintMode = (typeof PrintMode)[keyof typeof PrintMode];
+
+/**
+ * 小票类型。分开是因为顾客小票要打金额、后厨小票只打菜品和备注，
+ * 两者的份数、触发时机、是否显示价格都不一样。
+ */
+export const PrintTicketType = {
+  /** 顾客小票：含金额与门店抬头，用于对账和给顾客 */
+  Customer: 'customer',
+  /** 后厨小票：只出菜品、规格、备注，不含金额 */
+  Kitchen: 'kitchen',
+} as const;
+export type PrintTicketType = (typeof PrintTicketType)[keyof typeof PrintTicketType];
+
+/** 打印机接口格式，云打印机厂商的指令集，browser 模式下不生效。 */
+export const PrintPaperSize = {
+  /** 58mm 热敏纸 */
+  Mm58: '58mm',
+  /** 80mm 热敏纸，收银台主流 */
+  Mm80: '80mm',
+} as const;
+export type PrintPaperSize = (typeof PrintPaperSize)[keyof typeof PrintPaperSize];
+
+/**
+ * 打印任务状态机。与支付单一种思路：任务一旦落库就只往前走，
+ * 失败保留失败原因，供商家端「重试」按钮原样重发。
+ */
+export const PrintTaskStatus = {
+  Pending: 'pending',
+  Success: 'success',
+  Failed: 'failed',
+} as const;
+export type PrintTaskStatus = (typeof PrintTaskStatus)[keyof typeof PrintTaskStatus];
+
+export const PRINT_TASK_STATUS_LABELS: Record<PrintTaskStatus, string> = {
+  [PrintTaskStatus.Pending]: '待打印',
+  [PrintTaskStatus.Success]: '已打印',
+  [PrintTaskStatus.Failed]: '打印失败',
+};
+
+export const PRINT_TICKET_TYPE_LABELS: Record<PrintTicketType, string> = {
+  [PrintTicketType.Customer]: '顾客小票',
+  [PrintTicketType.Kitchen]: '后厨小票',
+};
+
+export const PRINT_MODE_LABELS: Record<PrintMode, string> = {
+  [PrintMode.Browser]: '浏览器小票机',
+  [PrintMode.Cloud]: '云打印机',
+};
+
+/** 单次最多打印份数：打错一次多出十几张纸的代价比多点一次按钮高。 */
+export const PRINT_MAX_COPIES = 5;
+
+/** 打印失败后允许的重试次数上限，超过后只能到店排查打印机。 */
+export const PRINT_MAX_RETRY = 3;
+
 /* ============================ 会员等级与成长值 ============================ */
 
 /**
@@ -284,6 +367,11 @@ export const DINE_TYPE_LABELS: Record<DineType, string> = {
   [DineType.DineIn]: '堂食',
   [DineType.Takeout]: '外送',
   [DineType.Pickup]: '自取',
+};
+
+export const TABLE_DINING_STATUS_LABELS: Record<TableDiningStatus, string> = {
+  [TableDiningStatus.Idle]: '空闲',
+  [TableDiningStatus.Dining]: '用餐中',
 };
 
 export const PAY_STATUS_LABELS: Record<PayStatus, string> = {

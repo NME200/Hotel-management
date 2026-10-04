@@ -11,6 +11,22 @@
   background-color: var(--ad-page-bg);
 }
 
+/*
+ * 侧边栏菜单尺寸统一在根变量上收口。
+ * 收起态的子菜单弹出层被 Element Plus 挂到 <body> 下，
+ * SidebarMenu.vue 的 scoped `:deep()` 够不到它，因此不能只改那边 ——
+ * 这里改根变量才能让展开态与收起弹层用同一套高度 / 缩进。
+ * 默认 56px 高、20px 缩进对 64px 宽的收起栏来说明显过大、
+ * 和普通单页菜单的 tooltip 不是一套视觉，故整体压到 36px / 14px。
+ */
+:root {
+  --el-menu-item-height: 36px;
+  --el-menu-sub-item-height: 34px;
+  --el-menu-base-level-padding: 14px;
+  --el-menu-level-padding: 14px;
+  --el-menu-item-font-size: 13px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -85,6 +101,101 @@ a {
 /* 表格里的等宽字段：商户号、订单号、IP 等 */
 .table-mono {
   font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+/*
+ * 收起态子菜单弹出层。
+ *
+ * 单项菜单（如「会员管理」）收起后是一个单行 tooltip，分组菜单却是一张多行卡片，
+ * 两者本来不可能一样大；这里要解决的是"卡片看着比 tooltip 胖一圈"的问题：
+ * Element 默认给弹出层 min-width 200px、行高 56px、左缩进 20px，
+ * 落到 64px 宽的收起栏旁边就显得很笨重。故把外框、行高、图标、字号一起压紧，
+ * 让它和 tooltip 是同一档视觉重量。
+ * 弹出层挂在 body 下，只能用全局选择器。
+ */
+.el-menu--popup {
+  min-width: 132px;
+  padding: 3px 0;
+}
+
+.el-menu--popup .el-menu-item {
+  height: 32px;
+  line-height: 32px;
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 13px;
+}
+
+/* 图标跟着行高压小，否则 32px 行里塞一个默认尺寸图标会撑出留白 */
+.el-menu--popup .el-menu-item .el-icon {
+  width: 16px;
+  margin-right: 6px;
+  font-size: 15px;
+}
+
+/*
+ * 侧栏配色与选中态。
+ *
+ * 放全局而不是组件 scoped 里，有两个原因：
+ * 1. 收起态的子菜单弹出层被挂到 <body> 下，组件够不到它，弹层里的选中态会漏样式；
+ * 2. 主菜单与底部低频菜单是两个 el-menu 实例，规则写一处才不会两边不一致。
+ *
+ * 选中态用「渐变底 + 左侧竖条」而不是 Element 默认的整行换色：
+ * 深色侧栏上「变亮一点」几乎看不出来，运营扫一眼不知道自己在哪页。
+ * 不用圆角 pill 加左右外边距 —— 收起态图标会被挤离中线。
+ */
+.sidebar .el-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: #c3cbe0;
+  --el-menu-hover-bg-color: rgb(255 255 255 / 6%);
+  --el-menu-active-color: #ffffff;
+
+  background-color: transparent;
+}
+
+.sidebar .el-menu-item,
+.sidebar .el-sub-menu__title {
+  position: relative;
+}
+
+.sidebar .el-menu-item:hover,
+.sidebar .el-sub-menu__title:hover {
+  background-color: rgb(255 255 255 / 6%);
+}
+
+.sidebar .el-menu-item.is-active {
+  background: linear-gradient(90deg, rgb(79 124 255 / 34%) 0%, rgb(79 124 255 / 6%) 100%);
+}
+
+.sidebar .el-menu-item.is-active::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 18px;
+  margin-top: -9px;
+  background: #7f9dff;
+  border-radius: 0 3px 3px 0;
+  content: '';
+}
+
+/* 分组标题在深色栏上靠字距与小字号退到第二层 */
+.sidebar .el-menu-item-group__title {
+  padding: 16px 16px 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #6b7896;
+}
+
+/* 底部低频项：比主菜单再暗一档，避免和日常动线抢注意力 */
+.sidebar__menu--foot {
+  --el-menu-text-color: #8a97b3;
+}
+
+/* 收起态弹层是浅色卡片，选中态同样要能看出来 */
+.el-menu--popup .el-menu-item.is-active {
+  color: #4f7cff;
+  background: #eef2ff;
 }
 
 .cell-text {

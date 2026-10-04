@@ -2,11 +2,12 @@
 import { computed, ref } from 'vue'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, View } from '@element-plus/icons-vue'
+import { Search, Refresh, View, Printer } from '@element-plus/icons-vue'
 
 import { fetchOrderSummary, fetchOrders, updateOrderStatus } from '@/api/order'
 import { QUERY_KEYS } from '@/api/keys'
 import type { DineType, OrderBrief, OrderListParams, OrderStatus } from '@/api/types/order'
+import type { PrintTicketType } from '@/api/types/print'
 import { DATE_PATTERN } from '@/constants/date-patterns'
 import {
   DINE_TYPE_DICT,
@@ -22,6 +23,7 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '@/constants/api'
 import { PERMISSION } from '@/constants/permission'
 import { dateRangeToFromTo, formatDateTime, formatMoney } from '@/utils/format'
 import { useAuthStore } from '@/stores/auth'
+import { useReceiptPrint } from '@/utils/print/use-receipt-print'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import OrderSummaryPanel from './components/OrderSummaryPanel.vue'
@@ -29,6 +31,8 @@ import OrderDetailDrawer from './components/OrderDetailDrawer.vue'
 
 const authStore = useAuthStore()
 const queryClient = useQueryClient()
+
+const { printing, printOrderReceipt } = useReceiptPrint()
 
 const keyword = ref('')
 const status = ref<OrderStatus | undefined>(undefined)
@@ -81,6 +85,15 @@ const statusMutation = useMutation({
     void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard })
   },
 })
+
+/** 打印小票：列表行直接打顾客小票，需要打后厨票去详情抽屉里选 */
+function printRow(row: OrderBrief, ticketType: PrintTicketType = 'customer'): void {
+  if (!authStore.can(PERMISSION.printCreate)) {
+    ElMessage.warning('没有小票打印权限')
+    return
+  }
+  void printOrderReceipt({ orderId: row.id, ticketType, trigger: 'manual' })
+}
 
 function advance(row: OrderBrief): void {
   const next = nextOrderStatus(row.status)
@@ -235,11 +248,21 @@ function handleReset(): void {
             <StatusTag :item="statusItem(row)" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right" align="right">
+        <el-table-column label="操作" width="300" fixed="right" align="right">
           <template #default="{ row }: { row: OrderBrief }">
             <el-button text type="primary" @click="openDetail(row)">
               <el-icon><View /></el-icon>
               <span>详情</span>
+            </el-button>
+            <el-button
+              v-if="authStore.can(PERMISSION.printCreate)"
+              text
+              type="primary"
+              :loading="printing"
+              @click="printRow(row)"
+            >
+              <el-icon><Printer /></el-icon>
+              <span>打印</span>
             </el-button>
             <el-button
               v-if="canAdvanceOrder(row.status)"

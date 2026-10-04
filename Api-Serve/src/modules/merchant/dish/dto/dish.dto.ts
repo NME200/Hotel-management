@@ -234,6 +234,8 @@ export class DishQueryDto extends PageQueryDto {
 /** 列表项：不带规格与加料，附加分类名，减小分页响应体积。 */
 export type DishBrief = Omit<Dish, 'category' | 'skus' | 'optionGroups'> & {
   categoryName: string;
+  /** 有规格或加料分组：点单前必须先选，前端据此决定是否弹选择框 */
+  needChoose: boolean;
 };
 
 export type DishDetail = DishBrief & Pick<Dish, 'skus' | 'optionGroups'>;

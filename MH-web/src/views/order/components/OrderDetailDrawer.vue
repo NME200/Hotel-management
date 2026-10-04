@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
+import { ElMessage } from 'element-plus'
+import { Printer, Document, RefreshRight } from '@element-plus/icons-vue'
 
 import { fetchOrderDetail } from '@/api/order'
+import { fetchPrintTasksByOrder, retryPrintTask } from '@/api/print'
 import { QUERY_KEYS } from '@/api/keys'
 import type { OrderItem } from '@/api/types/order'
+import type { PrintTaskItem } from '@/api/types/print'
 import { DINE_TYPE_DICT, ORDER_STATUS_DICT } from '@/constants/dictionary'
+import {
+  PRINT_TASK_STATUS_DICT,
+  PRINT_TICKET_TYPE_DICT,
+  PRINT_TRIGGER_LABEL,
+} from '@/constants/dictionary'
 import { PERMISSION } from '@/constants/permission'
 import { formatDateTime, formatMoney } from '@/utils/format'
 import { useAuthStore } from '@/stores/auth'
+import { useReceiptPrint } from '@/utils/print/use-receipt-print'
 import StatusTag from '@/components/common/StatusTag.vue'
 
 const visible = defineModel<boolean>({ required: true })
@@ -16,6 +26,7 @@ const visible = defineModel<boolean>({ required: true })
 const props = defineProps<{ orderId: number | null }>()
 
 const authStore = useAuthStore()
+const { printing, printOrderReceipt, previewOrderReceipt } = useReceiptPrint()
 
 const detailQuery = useQuery({
   queryKey: computed(() => [...QUERY_KEYS.orders, 'detail', props.orderId ?? 0]),
@@ -23,8 +34,19 @@ const detailQuery = useQuery({
   enabled: computed(() => visible.value && props.orderId !== null && authStore.can(PERMISSION.orderRead)),
 })
 
+/** 打印流水跟着抽屉打开一起拉，只读权限即可看 */
+const tasksQuery = useQuery({
+  queryKey: computed(() => [...QUERY_KEYS.printTasks, 'order', props.orderId ?? 0]),
+  queryFn: () => fetchPrintTasksByOrder(props.orderId ?? 0),
+  enabled: computed(() => visible.value && props.orderId !== null && authStore.can(PERMISSION.printRead)),
+})
+
 const detail = computed(() => detailQuery.data.value ?? null)
 const items = computed<OrderItem[]>(() => detail.value?.items ?? [])
+const tasks = computed(() => tasksQuery.data.value ?? [])
+
+const canPrint = computed(() => authStore.can(PERMISSION.printCreate))
+const canRetry = computed(() => authStore.can(PERMISSION.printCreate))
 
 const timeline = computed(() => {
   const data = detail.value
@@ -35,6 +57,26 @@ const timeline = computed(() => {
     { label: '完成时间', value: data.completedAt },
   ]
 })
+
+function handlePrint(ticketType: 'customer' | 'kitchen'): void {
+  if (props.orderId === null) return
+  void printOrderReceipt({ orderId: props.orderId, ticketType, trigger: 'manual' })
+}
+
+function handlePreview(ticketType: 'customer' | 'kitchen'): void {
+  if (props.orderId === null) return
+  void previewOrderReceipt(props.orderId, ticketType)
+}
+
+async function handleRetry(taskId: number): Promise<void> {
+  try {
+    await retryPrintTask(taskId)
+    ElMessage.success('已重新发起打印')
+    void tasksQuery.refetch()
+  } catch {
+    // 失败提示由请求拦截器统一给出
+  }
+}
 </script>
 
 <template>
@@ -117,6 +159,90 @@ const timeline = computed(() => {
             <span>实付金额</span><span>{{ formatMoney(detail.payAmount) }}</span>
           </div>
         </div>
+
+        <h4 class="detail__title">小票打印</h4>
+        <div class="print-bar">
+          <el-space wrap :size="8">
+            <el-button
+              v-if="canPrint"
+              type="primary"
+              :loading="printing"
+              @click="handlePrint('customer')"
+            >
+              <el-icon><Printer /></el-icon>
+              <span>打印顾客小票</span>
+            </el-button>
+            <el-button
+              v-if="canPrint"
+              :loading="printing"
+              @click="handlePrint('kitchen')"
+            >
+              <el-icon><Printer /></el-icon>
+              <span>打印后厨小票</span>
+            </el-button>
+            <el-button text @click="handlePreview('customer')">
+              <el-icon><Document /></el-icon>
+              <span>预览版面</span>
+            </el-button>
+          </el-space>
+        </div>
+
+        <el-table
+          v-if="tasks.length > 0"
+          :data="tasks"
+          border
+          size="small"
+          class="print-table"
+        >
+          <el-table-column label="票种" width="110" align="center">
+            <template #default="{ row }: { row: PrintTaskItem }">
+              <StatusTag :item="PRINT_TICKET_TYPE_DICT[row.ticketType]" />
+            </template>
+          </el-table-column>
+          <el-table-column label="份数" width="70" align="center">
+            <template #default="{ row }: { row: PrintTaskItem }">×{{ row.copies }}</template>
+          </el-table-column>
+          <el-table-column label="打印机" min-width="120">
+            <template #default="{ row }: { row: PrintTaskItem }">
+              <span v-if="row.printerName">{{ row.printerName }}</span>
+              <span v-else class="text-muted">未配置</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110" align="center">
+            <template #default="{ row }: { row: PrintTaskItem }">
+              <StatusTag :item="PRINT_TASK_STATUS_DICT[row.status]" />
+              <p v-if="row.retryCount > 0" class="table-sub-text">已重试 {{ row.retryCount }} 次</p>
+            </template>
+          </el-table-column>
+          <el-table-column label="触发 / 时间" min-width="150">
+            <template #default="{ row }: { row: PrintTaskItem }">
+              <p class="table-sub-text">
+                {{ PRINT_TRIGGER_LABEL[row.trigger ?? 'manual'] ?? row.trigger }}
+                <span v-if="row.operatorName">· {{ row.operatorName }}</span>
+              </p>
+              <p class="table-sub-text">{{ formatDateTime(row.printedAt || row.createdAt) }}</p>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" align="right">
+            <template #default="{ row }: { row: PrintTaskItem }">
+              <el-button
+                v-if="canRetry && row.status === 'failed'"
+                text
+                type="primary"
+                @click="handleRetry(row.id)"
+              >
+                <el-icon><RefreshRight /></el-icon>
+                <span>重试</span>
+              </el-button>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty description="暂无打印记录" :image-size="50" />
+          </template>
+        </el-table>
+        <p v-else-if="!tasksQuery.isFetching.value" class="print-empty text-muted">
+          本单还没有打印记录
+        </p>
 
         <h4 class="detail__title">订单进度</h4>
         <el-timeline class="detail__timeline">
@@ -234,5 +360,18 @@ const timeline = computed(() => {
 
 .detail__timeline {
   padding-left: 4px;
+}
+
+.print-bar {
+  margin-bottom: 12px;
+}
+
+.print-table {
+  margin-bottom: 24px;
+}
+
+.print-empty {
+  margin: 0 0 24px;
+  font-size: 13px;
 }
 </style>

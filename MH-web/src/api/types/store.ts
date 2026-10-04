@@ -17,6 +17,12 @@ export interface StoreInfo {
   /** 营业时段，形如 ["10:00-14:00", "17:00-21:00"] */
   businessHours: string[]
   status: StoreStatus
+  /** 接单/出餐后是否自动打印小票 */
+  autoPrint: boolean
+  /** 自动打印触发时机：接单后或出餐后 */
+  autoPrintOn: 'accepted' | 'ready'
+  /** 顾客小票默认份数 */
+  customerCopies: number
   createdAt: string
   updatedAt: string
 }

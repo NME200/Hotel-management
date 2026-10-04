@@ -1,42 +1,24 @@
-import { Column, Entity, Index } from 'typeorm';
-import {
-  Gender,
-  MemberLevel,
-  MemberStatus,
-} from '../../common/constants/dict';
+import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
+import { MemberLevel, MemberStatus } from '../../common/constants/dict';
 import { decimalTransformer } from '../transformers/decimal.transformer';
 import { TenantBaseEntity } from './base.entity';
+import { Customer } from './customer.entity';
 
-@Entity('member', { comment: '商户会员，小程序下单后自动建档' })
-@Index(['merchantId', 'phone'], { unique: true })
+@Entity('member', { comment: '商户会员档案：某个顾客在某一家店里的会员身份' })
+@Index(['merchantId', 'customerId'], { unique: true })
 @Index(['merchantId', 'level'])
-@Index(['merchantId', 'openid'], { unique: true })
+@Index(['customerId'])
 export class Member extends TenantBaseEntity {
-  @Column({ type: 'varchar', length: 64, comment: '昵称' })
-  nickname!: string;
-
-  @Column({ type: 'varchar', length: 255, nullable: true, comment: '头像' })
-  avatar!: string | null;
-
   /**
-   * 手机号可空：小程序授权登录只给出 openid，顾客可以在结算时再补手机号，
-   * 唯一约束在 MySQL 下不拦 NULL，因此多条无手机号的会员记录可以共存。
+   * 归属的登录身份。昵称、手机号、微信 openid 这些「你是谁」的信息都在 customer 上，
+   * member 只存这家店自己的经营数据（等级、成长值、余额、券、累计消费）。
    */
-  @Column({ type: 'varchar', length: 20, nullable: true, comment: '手机号，商户内唯一' })
-  phone!: string | null;
+  @Column({ name: 'customer_id', type: 'int', comment: '所属顾客 ID' })
+  customerId!: number;
 
-  /**
-   * 微信 openid：同一小程序下同一微信用户在每个商户各存一条会员记录，
-   * 因此唯一约束是 (merchant_id, openid) 而不是 openid 单列。
-   */
-  @Column({ type: 'varchar', length: 64, nullable: true, comment: '微信 openid' })
-  openid!: string | null;
-
-  @Column({ type: 'varchar', length: 64, nullable: true, comment: '微信 unionid' })
-  unionid!: string | null;
-
-  @Column({ type: 'varchar', length: 8, default: Gender.Unknown, comment: '性别' })
-  gender!: Gender;
+  @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'customer_id' })
+  customer!: Customer;
 
   @Column({ type: 'varchar', length: 16, default: MemberLevel.Normal, comment: '等级' })
   level!: MemberLevel;

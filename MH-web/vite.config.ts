@@ -3,8 +3,11 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
-// 前端不读取任何 env 配置：接口只用相对路径 /api/v1。
-// dev 环境由下面的 proxy 转发到后端；生产环境由同域反向代理承接，构建产物无需改动。
+import { BACKEND_ORIGIN } from './src/request.ts'
+
+// 前端不读取任何 env 配置：接口只用相对路径 /api/v1，图片只用相对路径 /uploads。
+// dev 环境由下面的 proxy 转发到后端（地址只有 src/request.ts 一处）；
+// 生产环境由同域反向代理承接，构建产物无需改动。
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -18,7 +21,12 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: BACKEND_ORIGIN,
+        changeOrigin: true,
+      },
+      // 商户上传的图片存在后端，库里只记相对地址，这里让 <img> 能直接显示
+      '/uploads': {
+        target: BACKEND_ORIGIN,
         changeOrigin: true,
       },
     },

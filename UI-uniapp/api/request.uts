@@ -1,0 +1,14 @@
+// 后端地址：小程序里唯一写 IP 的地方，换环境只改这一行。
+//
+// 小程序没有 dev proxy，`uni.request` 与 `<image>` 都只认绝对地址，
+// 所以这里必须写全 http(s)://IP:端口，不能像 Web 端那样用相对路径。
+//
+// 上线前要做两件事，缺一不可：
+// 1. 换成正式 https 域名（小程序不允许 http 请求）；
+// 2. 在小程序后台把该域名配进 request 与 downloadFile 合法域名列表
+//    （downloadFile 决定 /uploads/... 的商户图片能不能显示）。
+
+export const BACKEND_ORIGIN = "http://127.0.0.1:8000";
+
+/** 接口前缀：所有 api 调用的 path 都拼在它后面。 */
+export const API_BASE_URL = BACKEND_ORIGIN + "/api/v1";

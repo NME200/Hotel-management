@@ -18,8 +18,11 @@ export class CreatePaymentDto {
   @Min(1)
   orderId!: number;
 
-  @ApiProperty({ enum: [PaymentChannel.Wechat, PaymentChannel.Alipay, PaymentChannel.Mock] })
-  @IsIn([PaymentChannel.Wechat, PaymentChannel.Alipay, PaymentChannel.Mock])
+  @ApiProperty({
+    enum: Object.values(PaymentChannel),
+    description: '收款渠道；cash=现金、offline=收款码为线下收款，创建即成功，无需渠道对接',
+  })
+  @IsIn(Object.values(PaymentChannel))
   channel!: PaymentChannel;
 
   @ApiProperty({ required: false, description: '微信 JSAPI 付款人 openid' })

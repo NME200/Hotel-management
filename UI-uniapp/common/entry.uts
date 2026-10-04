@@ -1,23 +1,68 @@
 // 进店参数解析：小程序码 scene、分享参数、本地记忆三个来源都收在这里。
 //
-// 微信把 scene 整体 URL 编码后传进来（形如 m%3DM10001），
-// 解码失败或格式不认识时返回空串，由页面自己跳到「选择门店」，不做任何猜测。
+// 两种小程序码共用一个 scene 约定：
+//   门店码 `m=M10001`               —— 只定店；
+//   桌位码 `m=M10001&t=<qr_token>`  —— 定店 + 定桌。
+//
+// 微信把 scene 整体 URL 编码后传进来（形如 m%3DM10001%26t%3Dxxxx），
+// 解码失败或格式不认识时不做任何猜测，由页面自己跳到「选择门店」。
+//
+// 定桌要多问一次后端（token 换桌号，顺带校验这张码还有效），所以这里是异步的：
+// 页面 onLoad 调 resolveEntry()，onShow 里先 await entryReady() 再拉数据，
+// 否则首屏会先渲染出「没有桌号」，然后跳变一次。
 
-import { merchantCode, saveMerchantCode } from "./session.uts";
+import { clearTable, merchantCode, saveMerchantCode, saveTable } from "./session.uts";
+import { resolveTable } from "./api.uts";
+import { toast } from "./request.uts";
 
-const SCENE_KEY = "m";
+const SCENE_MERCHANT_KEY = "m";
+const SCENE_TABLE_KEY = "t";
 
-export function resolveEntryCode(options: OnLoadOptions): string {
-  const fromScene = readOption(options, "scene");
-  const fromQuery = readOption(options, "merchantCode");
-  const code = normalizeScene(fromScene).length > 0
-    ? normalizeScene(fromScene)
-    : fromQuery.trim();
-  if (code.length > 0) {
-    saveMerchantCode(code);
-    return code;
+/** 当前这次进店的解析任务；页面数据加载前 await 它即可。 */
+let entryTask: Promise<void> = Promise.resolve();
+
+export function resolveEntry(options: OnLoadOptions): void {
+  entryTask = applyEntry(options);
+}
+
+export function entryReady(): Promise<void> {
+  return entryTask;
+}
+
+async function applyEntry(options: OnLoadOptions): Promise<void> {
+  const parsed = parseScene(readOption(options, "scene"));
+  const fromQuery = readOption(options, "merchantCode").trim();
+  // 分享或调试时也可能直接把 token 挂在 query 上
+  const token = parsed.tableToken.length > 0
+    ? parsed.tableToken
+    : readOption(options, "tableToken").trim();
+
+  if (token.length > 0) {
+    const resolved = await resolveTable(token);
+    if (resolved.table != null) {
+      const table = resolved.table!;
+      saveMerchantCode(table.merchantCode);
+      saveTable(table.tableNo, token);
+      return;
+    }
+    // 桌位码失效（被重制 / 停用 / 删除）：必须把本地桌位清掉。
+    // 留着一个作废的 token 只会让顾客在结算页提交时才失败，体验更差。
+    clearTable();
+    if (resolved.message.length > 0) {
+      toast(resolved.message);
+    }
+    // 不 return：scene 里若还带了商户号，至少把店定下来
   }
-  return merchantCode();
+
+  const code = parsed.merchantCode.length > 0 ? parsed.merchantCode : fromQuery;
+  if (code.length == 0) {
+    return;
+  }
+  if (code != merchantCode()) {
+    // 换了一家店：上一家店的桌号绝不能带过来
+    clearTable();
+  }
+  saveMerchantCode(code);
 }
 
 function readOption(options: OnLoadOptions, key: string): string {
@@ -28,10 +73,10 @@ function readOption(options: OnLoadOptions, key: string): string {
   return value as string;
 }
 
-/** 兼容 `m=M10001`、`m=M10001&t=2`、以及整串就是商户编号的简写。 */
-function normalizeScene(raw: string): string {
+/** 兼容 `m=M10001`、`m=M10001&t=xxx`、以及整串就是商户编号的简写。 */
+function parseScene(raw: string): { merchantCode: string, tableToken: string } {
   if (raw.length == 0) {
-    return "";
+    return { merchantCode: "", tableToken: "" };
   }
   let decoded = raw;
   try {
@@ -39,13 +84,29 @@ function normalizeScene(raw: string): string {
   } catch (e) {
     decoded = raw;
   }
+
+  let merchant = "";
+  let table = "";
   const pairs = decoded.split(/[&;]/);
   for (let i = 0; i < pairs.length; i++) {
     const parts = pairs[i].split("=");
-    if (parts.length == 2 && parts[0].trim().toLowerCase() == SCENE_KEY) {
-      return parts[1].trim();
+    if (parts.length != 2) {
+      continue;
+    }
+    const key = parts[0].trim().toLowerCase();
+    const value = parts[1].trim();
+    if (key == SCENE_MERCHANT_KEY) {
+      merchant = value;
+    } else if (key == SCENE_TABLE_KEY) {
+      table = value;
     }
   }
-  const single = decoded.trim();
-  return /^[A-Za-z0-9_-]{3,32}$/.test(single) ? single : "";
+
+  if (merchant.length == 0 && table.length == 0) {
+    const single = decoded.trim();
+    if (/^[A-Za-z0-9_-]{3,32}$/.test(single)) {
+      merchant = single;
+    }
+  }
+  return { merchantCode: merchant, tableToken: table };
 }

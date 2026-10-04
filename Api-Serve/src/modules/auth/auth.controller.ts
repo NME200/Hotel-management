@@ -32,6 +32,16 @@ export class AuthController {
   }
 
   @Public()
+  @Post('cashier/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '收银台登录：与商家端同一套账号，但没有 cashier:use 权限的员工会被拒绝',
+  })
+  loginByCashier(@Body() dto: MerchantLoginDto): Promise<AuthResult> {
+    return this.authService.loginByCashier(dto);
+  }
+
+  @Public()
   @Post('platform/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '平台端登录' })

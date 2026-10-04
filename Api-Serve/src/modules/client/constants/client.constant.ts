@@ -9,8 +9,25 @@ export const CLIENT_ROLE = 'member';
  */
 export const SCENE_MERCHANT_KEY = 'm';
 
+/**
+ * 桌位码在 scene 里的写法：`m=M10001&t=k7Fq2Np3xYz9`。
+ *
+ * `t` 里放的是桌位 token 而不是桌号：桌号可改、可伪造，
+ * 而 token 由商家制码时生成、可随时作废重发，是唯一能防「把单下到别桌」的做法。
+ */
+export const SCENE_TABLE_KEY = 't';
+
 /** 解析小程序码 scene：兼容 `m=M10001`、`M10001`、以及被转义过一次的 `%3D`。 */
 export function parseSceneMerchantCode(scene?: string | null): string | null {
+  return parseSceneValue(scene, SCENE_MERCHANT_KEY);
+}
+
+/** 解析小程序码 scene 里的桌位 token；没有 `t` 参数（如扫的是门店码）时返回 null。 */
+export function parseSceneTableToken(scene?: string | null): string | null {
+  return parseSceneValue(scene, SCENE_TABLE_KEY);
+}
+
+function parseSceneValue(scene: string | null | undefined, key: string): string | null {
   const raw = scene?.trim();
   if (!raw) {
     return null;
@@ -18,13 +35,16 @@ export function parseSceneMerchantCode(scene?: string | null): string | null {
   const decoded = safeDecode(raw);
   const pairs = decoded.split(/[&;]/);
   for (const pair of pairs) {
-    const [key, value] = pair.split('=');
-    if (value && (key ?? '').trim().toLowerCase() === SCENE_MERCHANT_KEY) {
+    const [pairKey, value] = pair.split('=');
+    if (value && (pairKey ?? '').trim().toLowerCase() === key) {
       return value.trim();
     }
   }
-  // 整串就是商户编号的简写形式
-  return /^[A-Za-z0-9_-]{3,32}$/.test(decoded) ? decoded : null;
+  // 整串就是一个参数值的简写形式（只有商户号会这样写；桌位 token 一定带 `t=`）
+  if (key === SCENE_MERCHANT_KEY && /^[A-Za-z0-9_-]{3,32}$/.test(decoded)) {
+    return decoded;
+  }
+  return null;
 }
 
 function safeDecode(value: string): string {

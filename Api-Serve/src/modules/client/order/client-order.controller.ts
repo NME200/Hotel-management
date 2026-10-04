@@ -10,6 +10,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { PageResult } from '../../../common/dto/page-result.dto';
 import {
+  ClientCustomerId,
   ClientMemberId,
   ClientMerchantId,
   ClientSessionGuard,
@@ -63,35 +64,36 @@ export class ClientOrderController {
 
   @Get()
   @ApiBearerAuth('bearer')
-  @ApiOperation({ summary: '我的订单列表' })
+  @ApiOperation({ summary: '我的订单列表；scope=all 时返回这家账号在全部门店的订单' })
   list(
+    @ClientCustomerId() customerId: number,
     @ClientMerchantId() merchantId: number,
     @ClientMemberId() memberId: number,
     @Query() query: ClientOrderQueryDto,
   ): Promise<PageResult<ClientOrderBriefView>> {
-    return this.orders.list(merchantId, memberId, query);
+    return query.scope === 'all'
+      ? this.orders.listAllStores(customerId, query)
+      : this.orders.list(merchantId, memberId, query);
   }
 
   @Get(':orderNo')
   @ApiBearerAuth('bearer')
   @ApiOperation({ summary: '订单详情与状态跟踪（进度条、取餐码、出餐预估）' })
   detail(
-    @ClientMerchantId() merchantId: number,
-    @ClientMemberId() memberId: number,
+    @ClientCustomerId() customerId: number,
     @Param('orderNo') orderNo: string,
   ): Promise<ClientOrderTraceView> {
-    return this.orders.detail(merchantId, memberId, orderNo);
+    return this.orders.detailByOwner(customerId, orderNo);
   }
 
   @Post(':orderNo/cancel')
   @ApiBearerAuth('bearer')
   @ApiOperation({ summary: '取消未接单且未支付的订单，券与库存一并退回' })
   cancel(
-    @ClientMerchantId() merchantId: number,
-    @ClientMemberId() memberId: number,
+    @ClientCustomerId() customerId: number,
     @Param('orderNo') orderNo: string,
     @Body() dto: CancelClientOrderDto,
   ): Promise<ClientOrderTraceView> {
-    return this.orders.cancel(merchantId, memberId, orderNo, dto);
+    return this.orders.cancel(customerId, orderNo, dto);
   }
 }

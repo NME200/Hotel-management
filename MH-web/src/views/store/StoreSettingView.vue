@@ -8,6 +8,7 @@ import { fetchStore, updateStore } from '@/api/store'
 import { QUERY_KEYS } from '@/api/keys'
 import type { StoreInfo, StoreStatus, StoreUpdateInput } from '@/api/types/store'
 import { STORE_STATUS_OPTIONS } from '@/constants/dictionary'
+import { AUTO_PRINT_ON_OPTIONS, PRINT_MAX_COPIES } from '@/constants/dictionary'
 import { PERMISSION } from '@/constants/permission'
 import { requiredRule, telephoneRule } from '@/utils/validate'
 import { useAuthStore } from '@/stores/auth'
@@ -32,6 +33,9 @@ interface StoreForm {
   notice: string
   businessHours: string[]
   status: StoreStatus
+  autoPrint: boolean
+  autoPrintOn: 'accepted' | 'ready'
+  customerCopies: number
 }
 
 const queryClient = useQueryClient()
@@ -61,6 +65,9 @@ const form = reactive<StoreForm>({
   notice: '',
   businessHours: [],
   status: 'open',
+  autoPrint: false,
+  autoPrintOn: 'accepted',
+  customerCopies: 1,
 })
 
 const rules: FormRules<StoreForm> = {
@@ -111,6 +118,9 @@ function applyStore(data: StoreInfo): void {
     notice: data.notice ?? '',
     businessHours: data.businessHours,
     status: data.status,
+    autoPrint: data.autoPrint,
+    autoPrintOn: data.autoPrintOn,
+    customerCopies: data.customerCopies,
   })
 }
 
@@ -305,6 +315,50 @@ onMounted(() => {
         </el-col>
       </el-row>
 
+      <el-divider content-position="left">
+        <span class="store-form__section">小票打印</span>
+      </el-divider>
+
+      <el-alert
+        class="store-form__section-tip"
+        type="info"
+        :closable="false"
+        show-icon
+        title="这里只控制「什么时候自动打、打几张」。具体用哪台打印机，去「打印设置」里配。"
+      />
+
+      <el-row :gutter="16">
+        <el-col :xs="24" :md="12">
+          <el-form-item label="自动打印">
+            <el-switch v-model="form.autoPrint" />
+            <span class="store-form__hint">开启后在订单流转到下面选定的时机时自动出票</span>
+          </el-form-item>
+        </el-col>
+        <el-col :xs="24" :md="12">
+          <el-form-item label="打印时机">
+            <el-select v-model="form.autoPrintOn" :disabled="!form.autoPrint" style="width: 100%">
+              <el-option
+                v-for="item in AUTO_PRINT_ON_OPTIONS"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :xs="24" :md="12">
+          <el-form-item label="顾客小票份数">
+            <el-input-number
+              v-model="form.customerCopies"
+              :min="1"
+              :max="PRINT_MAX_COPIES"
+              style="width: 100%"
+            />
+            <span class="store-form__hint">默认 {{ PRINT_MAX_COPIES }} 份上限</span>
+          </el-form-item>
+        </el-col>
+      </el-row>
+
       <div class="store-form__footer">
         <el-space>
           <el-button :disabled="!canEdit" @click="handleReset">重置</el-button>
@@ -353,6 +407,22 @@ onMounted(() => {
 
 .store-form__tip {
   margin-top: 12px;
+}
+
+.store-form__section {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.store-form__section-tip {
+  margin-bottom: 16px;
+}
+
+.store-form__hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .hour-list {

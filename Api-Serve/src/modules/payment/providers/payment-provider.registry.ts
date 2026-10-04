@@ -1,27 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import { BusinessException } from '../../../common/exceptions/business.exception';
 import { PaymentChannel } from '../constants/payment.constant';
+import { CHANNEL_LABELS } from '../models/payment-config.model';
 import type { PaymentProvider } from './payment-provider.interface';
 import { MockPaymentProvider } from './mock.provider';
-
-const CHANNEL_LABELS: Record<PaymentChannel, string> = {
-  [PaymentChannel.Wechat]: '微信支付',
-  [PaymentChannel.Alipay]: '支付宝',
-  [PaymentChannel.Mock]: '模拟支付',
-};
+import { CashPaymentProvider, OfflineScanPaymentProvider } from './offline.provider';
 
 /**
  * 渠道注册表。
  *
  * 新增微信/支付宝实现时，只需在这里注入并 register，
  * 业务层（下单/回调/退款/关单）不需要任何改动。
+ *
+ * 现金与收款码也在这里注册：它们走的是同一套「下单 → 状态机 → markOrderPaid」链路，
+ * 只是没有远端渠道。把它们放进注册表而不是在业务层写 if，收银台与在线支付
+ * 才不会各写一份收款逻辑。
  */
 @Injectable()
 export class PaymentProviderRegistry {
   private readonly providers = new Map<PaymentChannel, PaymentProvider>();
 
-  constructor(mockProvider: MockPaymentProvider) {
+  constructor(
+    mockProvider: MockPaymentProvider,
+    cashProvider: CashPaymentProvider,
+    offlineScanProvider: OfflineScanPaymentProvider,
+  ) {
     this.register(mockProvider);
+    this.register(cashProvider);
+    this.register(offlineScanProvider);
   }
 
   register(provider: PaymentProvider): void {

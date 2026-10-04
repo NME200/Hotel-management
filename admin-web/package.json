@@ -14,9 +14,11 @@
     "@vueuse/core": "^15.0.0",
     "axios": "^1.20.0",
     "dayjs": "^1.11.23",
+    "echarts": "^6.1.0",
     "element-plus": "^2.14.6",
     "pinia": "^4.0.3",
     "vue": "^3.5.42",
+    "vue-echarts": "^8.3.1",
     "vue-router": "^5.3.1"
   },
   "devDependencies": {

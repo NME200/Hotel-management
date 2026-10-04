@@ -1,0 +1,369 @@
+<template>
+  <view class="page">
+    <!-- 标题区：登录与绑定共用这一页，只换文案，不另开一个页面（两条路的能力完全一样） -->
+    <view class="head">
+      <text class="title">{{ titleText() }}</text>
+      <text class="subtitle">{{ subtitleText() }}</text>
+    </view>
+
+    <view class="field">
+      <text class="field-label">手机号</text>
+      <input
+        class="field-input"
+        type="number"
+        maxlength="11"
+        :value="phone"
+        placeholder="请输入 11 位手机号"
+        placeholder-class="field-ph"
+        @input="onPhone"
+      />
+    </view>
+
+    <view class="field">
+      <text class="field-label">验证码</text>
+      <input
+        class="field-input field-input-code"
+        type="number"
+        maxlength="6"
+        :value="code"
+        placeholder="6 位验证码"
+        placeholder-class="field-ph"
+        @input="onCode"
+        @confirm="tapSubmit"
+      />
+      <view :class="sendClass()" @click="tapSend"><text class="send-text">{{ sendText() }}</text></view>
+    </view>
+
+    <view :class="submitClass()" @click="tapSubmit">
+      <text class="submit-text">{{ submitText() }}</text>
+    </view>
+
+    <view class="split">
+      <view class="split-line"></view>
+      <text class="split-text">或</text>
+      <view class="split-line"></view>
+    </view>
+
+    <!-- 微信一键授权：这个能力只能由顾客点按钮触发，小程序无法编程调用 -->
+    <button class="wechat" open-type="getPhoneNumber" @getphonenumber="onPhoneAuth">
+      <text class="wechat-text">微信手机号一键登录</text>
+    </button>
+
+    <text class="tip">{{ tipText() }}</text>
+  </view>
+</template>
+
+<script setup lang="uts">
+  import { onLoad, onUnload } from '@dcloudio/uni-app'
+  import { loginBySms, loginWithPhone, phoneCodeOf, sendSmsCode } from '../../common/api.uts'
+  import { toast } from '../../common/request.uts'
+
+  const phone = ref('')
+  const code = ref('')
+  /** mode=bind：从「我的」/会员中心的绑定行进来，成功后返回上一页而不是跳首页 */
+  const binding = ref(false)
+  const sending = ref(false)
+  const submitting = ref(false)
+  const countdown = ref(0)
+
+  let tickTimer = -1
+
+  function titleText() : string {
+    return binding.value ? '绑定手机号' : '登录 / 注册'
+  }
+
+  function subtitleText() : string {
+    if (binding.value) {
+      return '绑定后可用手机号在本店找回会员身份'
+    }
+    return '未注册的手机号将自动创建会员档案'
+  }
+
+  function tipText() : string {
+    return '验证码 5 分钟内有效；同一手机号 60 秒内只能发送一次'
+  }
+
+  function phoneReady() : boolean {
+    return phone.value.length == 11
+  }
+
+  /** 获取验证码按钮：倒计时期间显示剩余秒数，手机号没填够 11 位时置灰 */
+  function sendClass() : string {
+    if (countdown.value > 0) {
+      return 'send send-wait'
+    }
+    return phoneReady() ? 'send' : 'send send-off'
+  }
+
+  function sendText() : string {
+    if (countdown.value > 0) {
+      return '' + countdown.value + ' 秒'
+    }
+    return sending.value ? '发送中' : '获取验证码'
+  }
+
+  function submitClass() : string {
+    return canSubmit() ? 'submit' : 'submit submit-off'
+  }
+
+  function submitText() : string {
+    if (submitting.value) {
+      return '登录中…'
+    }
+    return binding.value ? '绑定' : '登录 / 注册'
+  }
+
+  function canSubmit() : boolean {
+    return phoneReady() && code.value.length >= 4 && !submitting.value
+  }
+
+  /** 输入框事件：uni-app x 里 detail.value 已是字符串，不需要再判类型 */
+  function onPhone(event : UniInputEvent) : void {
+    phone.value = event.detail.value.replace(/[^0-9]/g, '')
+  }
+
+  function onCode(event : UniInputEvent) : void {
+    code.value = event.detail.value.replace(/[^0-9]/g, '')
+  }
+
+  function tapSend() : void {
+    if (countdown.value > 0 || sending.value) {
+      return
+    }
+    if (!phoneReady()) {
+      toast('请输入 11 位手机号')
+      return
+    }
+    doSend()
+  }
+
+  async function doSend() : Promise<void> {
+    sending.value = true
+    const result = await sendSmsCode(phone.value)
+    sending.value = false
+    if (result.code != 0) {
+      // 后端已经把「发送太快」「今日次数已用完」「短信未开通」写成了能照做的话，这里不改写
+      toast(result.message)
+      return
+    }
+    startCountdown()
+    toast('验证码已发送')
+  }
+
+  function startCountdown() : void {
+    countdown.value = 60
+    tickTimer = setInterval(() => {
+      countdown.value = countdown.value - 1
+      if (countdown.value <= 0) {
+        clearInterval(tickTimer)
+        tickTimer = -1
+      }
+    }, 1000)
+  }
+
+  function tapSubmit() : void {
+    if (submitting.value) {
+      return
+    }
+    if (!phoneReady()) {
+      toast('请输入 11 位手机号')
+      return
+    }
+    if (code.value.length == 0) {
+      toast('请输入验证码')
+      return
+    }
+    doSubmit()
+  }
+
+  async function doSubmit() : Promise<void> {
+    submitting.value = true
+    const result = await loginBySms(phone.value, code.value)
+    submitting.value = false
+    toast(result.message)
+    if (result.ok) {
+      finish()
+    }
+  }
+
+  function onPhoneAuth(event : UTSJSONObject) : void {
+    doWechatLogin(phoneCodeOf(event))
+  }
+
+  async function doWechatLogin(smsCode : string) : Promise<void> {
+    if (submitting.value) {
+      return
+    }
+    submitting.value = true
+    const result = await loginWithPhone(smsCode)
+    submitting.value = false
+    toast(result.message)
+    if (result.ok) {
+      finish()
+    }
+  }
+
+  /** 登录成功后回到顾客来的地方；没有上一页（直接进登录页）才回首页。 */
+  function finish() : void {
+    if (getCurrentPages().length > 1) {
+      uni.navigateBack()
+      return
+    }
+    uni.switchTab({ url: '/pages/index/index' })
+  }
+
+  onLoad((options : OnLoadOptions) => {
+    const mode = options['mode']
+    binding.value = mode != null && (mode as string) == 'bind'
+  })
+
+  onUnload(() => {
+    if (tickTimer != -1) {
+      clearInterval(tickTimer)
+      tickTimer = -1
+    }
+  })
+</script>
+
+<style lang="scss">
+  .page {
+    flex: 1;
+    background-color: $card-bg;
+    padding-left: $space-6;
+    padding-right: $space-6;
+  }
+
+  .head {
+    margin-top: $space-6;
+    margin-bottom: $space-6;
+  }
+
+  .title {
+    font-size: $font-h1;
+    font-weight: $bold;
+    color: $text-1;
+  }
+
+  .subtitle {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-2;
+  }
+
+  /* 输入行：只用细线分隔，不套卡片（规范里表单页也是无卡版式） */
+  .field {
+    flex-direction: row;
+    align-items: center;
+    height: 108rpx;
+    border-bottom-width: 1px;
+    border-bottom-color: $divider;
+  }
+
+  .field-label {
+    width: 132rpx;
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .field-input {
+    flex: 1;
+    height: 88rpx;
+    font-size: $font-h2;
+    color: $text-1;
+  }
+
+  .field-input-code {
+    width: 240rpx;
+    flex: none;
+  }
+
+  .field-ph {
+    font-size: $font-body;
+    color: $text-3;
+  }
+
+  .send {
+    width: 188rpx;
+    height: 60rpx;
+    border-radius: $radius-btn-sm;
+    background-color: $brand-light;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .send-off {
+    background-color: $chip-bg;
+  }
+
+  .send-wait {
+    background-color: $chip-bg;
+  }
+
+  .send-text {
+    font-size: $font-caption;
+    font-weight: $semibold;
+    color: $brand-dark;
+  }
+
+  .submit {
+    margin-top: $space-6;
+    height: 96rpx;
+    border-radius: $radius-btn-lg;
+    background-color: $brand;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .submit-off {
+    background-color: $text-4;
+  }
+
+  .submit-text {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: #FFFFFF;
+  }
+
+  .split {
+    flex-direction: row;
+    align-items: center;
+    margin-top: $space-6;
+    margin-bottom: $space-5;
+  }
+
+  .split-line {
+    flex: 1;
+    height: 1px;
+    background-color: $divider;
+  }
+
+  .split-text {
+    margin-left: $space-3;
+    margin-right: $space-3;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
+  /* 一键登录：描边按钮，与主按钮区分开，避免两个都是实心绿色 */
+  .wechat {
+    height: 96rpx;
+    border-radius: $radius-btn-lg;
+    border-width: 1px;
+    border-color: $brand;
+    background-color: $card-bg;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .wechat-text {
+    font-size: $font-h2;
+    font-weight: $semibold;
+    color: $brand-dark;
+  }
+
+  .tip {
+    margin-top: $space-5;
+    font-size: $font-small;
+    color: $text-3;
+  }
+</style>

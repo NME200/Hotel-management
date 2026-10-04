@@ -1,7 +1,10 @@
 <template>
   <view class="page">
     <scroll-view class="scroll" direction="vertical" :show-scrollbar="false">
-      <!-- 头部：无渐变、无卡片，圆形头像直接落在页面背景上（规范 5.3 / 9.7） -->
+      <!--
+        头部即登录入口（规范 5.3 / 9.7：无渐变、无卡片，圆形头像直接落在页面背景上）。
+        未登录时点它进登录页：那里同时给「手机号验证码登录」和「微信手机号一键登录」两种方式。
+      -->
       <view class="head" @click="tapHead">
         <view class="avatar">
           <image v-if="avatarUrl() != ''" class="avatar-img" :src="avatarUrl()" mode="aspectFill"></image>
@@ -55,6 +58,18 @@
         </view>
       </view>
 
+      <view v-if="logged" class="rule"></view>
+
+      <!--
+        手机号：一键登录时通常已经带上；早先用别的方式进来的顾客在这里补。
+        已绑定时只显示脱敏号不给改 —— 手机号是顾客与门店之间的锚点，换号要走门店人工。
+      -->
+      <view v-if="logged" class="phone">
+        <text class="phone-label">手机号</text>
+        <text v-if="hasPhone()" class="phone-value">{{ phoneText() }}</text>
+        <view v-else class="phone-bind" @click="goBindPhone"><text class="phone-bind-text">绑定手机号</text></view>
+      </view>
+
       <view v-if="hasCard()" class="rule"></view>
 
       <!-- 运营位色块：整张卡来自 /client/activities?slot=mine，商户没配时后端下发会员日卡 -->
@@ -81,11 +96,10 @@
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
   import { ActivityCard, MemberBrief } from '../../common/models.uts'
-  import { fetchActivities, fetchMember, login, logout } from '../../common/api.uts'
+  import { fetchActivities, fetchMember, logout } from '../../common/api.uts'
   import { clearSession, isLogged, merchantCode, nickname } from '../../common/session.uts'
   import { cardGo, cardSub, iconChar, openCard } from '../../common/activity.uts'
-  import { moneyText } from '../../common/format.uts'
-  import { toast } from '../../common/request.uts'
+  import { imageUrl, moneyText } from '../../common/format.uts'
 
   const logged = ref(false)
   const member = ref<MemberBrief | null>(null)
@@ -101,7 +115,7 @@
     if (m == null) {
       return ''
     }
-    return m!.avatar == null ? '' : m!.avatar!
+    return imageUrl(m!.avatar)
   }
 
   function avatarChar() : string {
@@ -123,7 +137,8 @@
   function headLine() : string {
     const m = brief()
     if (m == null) {
-      return '登录后查看会员等级、积分与优惠券'
+      // 这一行同时是「点一下会发生什么」的说明：登录与绑手机号是一起完成的
+      return '点一下授权手机号，登录并绑定会员'
     }
     return m!.levelLabel + ' · 成长值 ' + m!.growthValue
   }
@@ -190,25 +205,36 @@
   }
 
   /**
-   * 头部即登录入口：后端只认真实微信 code，失败原样 toast 后端文案，
-   * 绝不在前端伪造登录成功。事件绑定用同步函数包一层，异步工作在 doLogin 里。
+   * 头部即登录入口：未登录时跳登录页，已登录时进会员中心。
+   * 登录与绑手机号都在登录页完成，这里不重复实现一次授权弹层。
    */
   function tapHead() : void {
     if (logged.value) {
       goMember()
       return
     }
-    doLogin()
+    goLogin()
   }
 
-  async function doLogin() : Promise<void> {
-    const result = await login('', '')
-    if (result.code != 0) {
-      toast(result.message)
-      return
+  function goLogin() : void {
+    uni.navigateTo({ url: '/pages/login/login' })
+  }
+
+  function goBindPhone() : void {
+    uni.navigateTo({ url: '/pages/login/login?mode=bind' })
+  }
+
+  function hasPhone() : boolean {
+    const m = brief()
+    return m != null && m!.phoneMasked != null
+  }
+
+  function phoneText() : string {
+    const m = brief()
+    if (m == null || m!.phoneMasked == null) {
+      return ''
     }
-    await load()
-    toast('登录成功')
+    return m!.phoneMasked!
   }
 
   function tapLogout() : void {
@@ -312,6 +338,40 @@
     color: $brand;
     lines: 2;
     text-overflow: ellipsis;
+  }
+
+  /* 手机号行：左标签右值，未绑定时右侧是个胶囊小按钮 */
+  .phone {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: $space-1;
+    padding-bottom: $space-1;
+  }
+
+  .phone-label {
+    font-size: $font-body;
+    color: $text-1;
+  }
+
+  .phone-value {
+    font-size: $font-body;
+    color: $text-2;
+  }
+
+  .phone-bind {
+    padding-top: $space-1;
+    padding-bottom: $space-1;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: $brand-light;
+    border-radius: $radius-btn-sm;
+  }
+
+  .phone-bind-text {
+    font-size: $font-caption;
+    font-weight: $semibold;
+    color: $brand-dark;
   }
 
   /* 模块分隔：24rpx + 1px 细线 + 24rpx（规范 5.3 的 24pt 间距） */

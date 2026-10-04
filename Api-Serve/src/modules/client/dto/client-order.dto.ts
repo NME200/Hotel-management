@@ -69,12 +69,16 @@ export class CreateClientOrderDto {
   @IsIn(Object.values(DineType))
   dineType!: DineType;
 
-  @ApiProperty({ required: false, description: '桌号，堂食时填写' })
+  @ApiProperty({
+    required: false,
+    description:
+      '桌位 token（扫桌位码时由 scene 的 t 参数得到）。堂食必填，后端据此反查桌号 —— 不接受手填桌号，否则顾客可以把单下到别桌',
+  })
   @IsOptional()
   @Trimmed()
   @IsString()
-  @MaxLength(16)
-  tableNo?: string;
+  @MaxLength(64)
+  tableToken?: string;
 
   @ApiProperty({ required: false, description: '就餐人数' })
   @IsOptional()
@@ -131,6 +135,12 @@ export class ClientOrderQueryDto extends PageQueryDto {
   @IsOptional()
   @IsIn(Object.values(OrderStatus))
   status?: OrderStatus;
+
+  /** all = 跨门店的全部订单（小程序「我的订单」），默认只看当前这家店 */
+  @ApiProperty({ required: false, enum: ['store', 'all'] })
+  @IsOptional()
+  @IsIn(['store', 'all'])
+  scope?: 'store' | 'all';
 }
 
 export class CancelClientOrderDto {

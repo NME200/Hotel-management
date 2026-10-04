@@ -4,7 +4,7 @@
 // 后端加字段或改名时改动面只有这一个文件。
 
 import { get, post, patch, toast, wxLoginCode, ApiResult } from "./request.uts";
-import { child } from "./json.uts";
+import { child, str } from "./json.uts";
 import {
   accessToken,
   isLogged,
@@ -30,6 +30,7 @@ import {
   PaymentChannelOption,
   PaymentView,
   StoreContext,
+  TableContext,
   parseCheckout,
   parseClaimableList,
   parseCouponList,
@@ -46,6 +47,7 @@ import {
   parsePaymentChannels,
   parseStore,
   parseStoreList,
+  parseTableContext,
   parseActivityList,
 } from "./models.uts";
 
@@ -75,6 +77,23 @@ export async function fetchStoreContext(code: string): Promise<StoreContext | nu
     return null;
   }
   return parseStore(result.data!);
+}
+
+/**
+ * 扫桌位码定桌：token 换「门店 + 桌号」。
+ *
+ * 失败时不抛异常而是把后端的顾客文案带回来（码被重制、桌位停用都会走到这里），
+ * 由 entry.uts 决定是提示后继续用门店上下文，还是清掉本地桌位。
+ */
+export async function resolveTable(token: string): Promise<{ table: TableContext | null, message: string }> {
+  if (token.length == 0) {
+    return { table: null, message: "" };
+  }
+  const result = await get("/client/tables/resolve", { token: token });
+  if (result.code != 0 || result.data == null) {
+    return { table: null, message: result.message };
+  }
+  return { table: parseTableContext(result.data!), message: "" };
 }
 
 /* ------------------------------ 菜单 ------------------------------ */
@@ -127,11 +146,20 @@ export async function fetchActivities(slot: string): Promise<ActivityCard[]> {
 
 /* ------------------------------ 登录 ------------------------------ */
 
+/** 一键登录 / 绑号的结果：ok 之外带一句该给顾客看的话（成功提示，或这次没绑成的原因）。 */
+export type PhoneAuthResult = {
+  ok: boolean;
+  message: string;
+};
+
 /**
  * 顾客登录。后端只认真实微信 code，没有模拟分支：
  * 平台未配置 AppID/AppSecret 时会返回一句可直接展示的提示，这里透传。
+ *
+ * phoneCode 非空时后端会顺手换手机号并绑定；绑定失败不会让登录失败，
+ * 原因写在返回的 phoneNote 里。
  */
-export async function login(nickname: string, avatar: string): Promise<ApiResult> {
+export async function login(nickname: string, avatar: string, phoneCode: string): Promise<ApiResult> {
   if (needStore()) {
     return { code: -1, message: "请先选择门店", data: null, status: 0 };
   }
@@ -146,11 +174,108 @@ export async function login(nickname: string, avatar: string): Promise<ApiResult
   if (avatar.length > 0) {
     body["avatar"] = avatar;
   }
+  if (phoneCode.length > 0) {
+    body["phoneCode"] = phoneCode;
+  }
   const result = await post("/client/auth/login", body);
   if (result.code == 0 && result.data != null) {
     applyLogin(parseLogin(result.data));
   }
   return result;
+}
+
+/**
+ * 「手机号快速验证组件」的回调入口：拿到 code 就顺手登录并绑号。
+ *
+ * 顾客点了拒绝时 code 是空串——登录照常走完，只是不绑号，
+ * 所以这里不能因为拿不到 code 就中断（否则拒绝一次授权就连不进来了）。
+ */
+export async function loginWithPhone(phoneCode: string): Promise<PhoneAuthResult> {
+  const result = await login("", "", phoneCode);
+  if (result.code != 0) {
+    return { ok: false, message: result.message } as PhoneAuthResult;
+  }
+  const note = phoneNoteOf(result);
+  return { ok: true, message: note.length > 0 ? note : "登录成功" } as PhoneAuthResult;
+}
+
+/**
+ * 已登录顾客单独绑号（「我的」与会员中心那一行）。
+ *
+ * 后端回的是整套登录结果：认领商家导入的历史档案会让顾客身份（customer.id）变，
+ * 令牌里放的正是它，所以这里必须换发并覆盖本地令牌。
+ */
+export async function bindPhone(phoneCode: string): Promise<PhoneAuthResult> {
+  if (phoneCode.length == 0) {
+    return { ok: false, message: "已取消授权" } as PhoneAuthResult;
+  }
+  const result = await post("/client/auth/phone", { code: phoneCode });
+  if (result.code != 0) {
+    return { ok: false, message: result.message } as PhoneAuthResult;
+  }
+  applyLogin(parseLogin(result.data));
+  const note = phoneNoteOf(result);
+  return { ok: true, message: note.length > 0 ? note : "手机号已绑定" } as PhoneAuthResult;
+}
+
+/**
+ * 手机号验证码登录（未注册的号码由后端就地建档）。
+ *
+ * 提交前静默补一次 `wx.login`：带上 wxCode 才能让这条身份同时有微信 openid，
+ * 否则同一顾客下次用一键授权进来又要合并一次。
+ * 换不到 openid 时整笔失败而不是降级成「只有手机号」的身份。
+ */
+export async function loginBySms(phone: string, code: string): Promise<PhoneAuthResult> {
+  if (needStore()) {
+    return { ok: false, message: "请先选择门店" } as PhoneAuthResult;
+  }
+  if (code.length == 0) {
+    return { ok: false, message: "请输入验证码" } as PhoneAuthResult;
+  }
+  const wxCode = await wxLoginCode();
+  if (wxCode.length == 0) {
+    return { ok: false, message: "未拿到微信登录凭证，请在微信里打开小程序" } as PhoneAuthResult;
+  }
+  const result = await post("/client/auth/sms/login", { phone: phone, code: code, wxCode: wxCode });
+  if (result.code != 0) {
+    return { ok: false, message: result.message } as PhoneAuthResult;
+  }
+  applyLogin(parseLogin(result.data));
+  const note = phoneNoteOf(result);
+  return { ok: true, message: note.length > 0 ? note : "登录成功" } as PhoneAuthResult;
+}
+
+/** 发送登录验证码。号码有没有注册过，后端回的话完全一样。 */
+export async function sendSmsCode(phone: string): Promise<ApiResult> {
+  if (phone.length != 11) {
+    return { code: -1, message: "请输入 11 位手机号", data: null, status: 0 };
+  }
+  return post("/client/auth/sms/code", { phone: phone });
+}
+
+function phoneNoteOf(result: ApiResult): string {
+  if (result.data == null) {
+    return "";
+  }
+  const parsed = parseLogin(result.data);
+  if (parsed == null || parsed!.phoneNote == null) {
+    return "";
+  }
+  return parsed!.phoneNote!;
+}
+
+/**
+ * 从「手机号快速验证组件」的回调里取一次性凭证。
+ *
+ * 运行时 event 是普通对象，所以走 json.uts 的下标封装而不是 getJSONObject。
+ * 顾客点了「拒绝」时拿不到 code，返回空串由调用方决定怎么处理（登录不该因此中断）。
+ */
+export function phoneCodeOf(event: UTSJSONObject): string {
+  const detail = child(event, "detail");
+  if (detail == null) {
+    return "";
+  }
+  return str(detail!, "code");
 }
 
 function applyLogin(result: LoginResult | null): void {
@@ -169,7 +294,7 @@ export async function ensureLogin(): Promise<boolean> {
   if (isLogged()) {
     return true;
   }
-  const result = await login("", "");
+  const result = await login("", "", "");
   if (result.code != 0) {
     toast(result.message);
     return false;
@@ -274,19 +399,23 @@ export async function checkout(dineType: string, items: UTSJSONObject[], couponI
   return parseCheckout(result.data);
 }
 
+/**
+ * 提交订单。堂食必须带 tableToken —— 后端用它反查桌号，
+ * 所以这里传的是凭据而不是桌号文本，前端改不了也编不出别人的桌号。
+ */
 export async function createOrder(
   dineType: string,
   items: UTSJSONObject[],
   couponId: number,
-  tableNo: string,
+  tableToken: string,
   remark: string,
 ): Promise<{ order: OrderBrief | null, message: string }> {
   const body: UTSJSONObject = { dineType: dineType, items: items, peopleCount: 1 };
   if (couponId > 0) {
     body["couponId"] = couponId;
   }
-  if (tableNo.length > 0) {
-    body["tableNo"] = tableNo;
+  if (tableToken.length > 0) {
+    body["tableToken"] = tableToken;
   }
   if (remark.length > 0) {
     body["remark"] = remark;
@@ -298,11 +427,15 @@ export async function createOrder(
   return { order: parseOrder(result.data!), message: "" };
 }
 
+/**
+ * 我的订单：账号跨门店，所以一次拉全部店的单（scope=all）。
+ * 后端按「这个顾客在各家店的会员档案」归集，每条都带 storeName / storeCode。
+ */
 export async function fetchOrders(status: string, page: number): Promise<OrderBrief[]> {
   if (!isLogged()) {
     return [] as OrderBrief[];
   }
-  const query: UTSJSONObject = { page: page, pageSize: 10 };
+  const query: UTSJSONObject = { page: page, pageSize: 10, scope: "all" };
   if (status.length > 0) {
     query["status"] = status;
   }
@@ -331,13 +464,28 @@ export async function cancelOrder(orderNo: string, reason: string): Promise<ApiR
 
 /* ------------------------------ 支付 ------------------------------ */
 
-export async function fetchPaymentChannels(): Promise<PaymentChannelOption[]> {
-  const result = await get("/client/payments/channels", null);
+// 支付接口仍按门店取渠道与 JSAPI 凭据，所以「这张单属于哪家店」要显式带上：
+// 订单列表现在是跨门店的，请求层只会补当前门店编号，不覆盖就会拿成别家的渠道。
+
+export async function fetchPaymentChannels(storeCode: string): Promise<PaymentChannelOption[]> {
+  const params: UTSJSONObject = {};
+  if (storeCode.length > 0) {
+    params["merchantCode"] = storeCode;
+  }
+  const result = await get("/client/payments/channels", params);
   return parsePaymentChannels(result.data);
 }
 
-export async function createPayment(orderNo: string, channel: string): Promise<PaymentView | null> {
-  const result = await post("/client/payments", { orderNo: orderNo, channel: channel });
+export async function createPayment(
+  orderNo: string,
+  channel: string,
+  storeCode: string,
+): Promise<PaymentView | null> {
+  const body: UTSJSONObject = { orderNo: orderNo, channel: channel };
+  if (storeCode.length > 0) {
+    body["merchantCode"] = storeCode;
+  }
+  const result = await post("/client/payments", body);
   if (result.code != 0 || result.data == null) {
     toast(result.message);
     return null;
@@ -345,8 +493,15 @@ export async function createPayment(orderNo: string, channel: string): Promise<P
   return parsePayment(result.data);
 }
 
-export async function fetchPaymentStatus(paymentNo: string): Promise<PaymentView | null> {
-  const result = await get("/client/payments/" + paymentNo, null);
+export async function fetchPaymentStatus(
+  paymentNo: string,
+  storeCode: string,
+): Promise<PaymentView | null> {
+  const params: UTSJSONObject = {};
+  if (storeCode.length > 0) {
+    params["merchantCode"] = storeCode;
+  }
+  const result = await get("/client/payments/" + paymentNo, params);
   if (result.code != 0 || result.data == null) {
     return null;
   }

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Like, MoreThan, Repository, type FindOptionsWhere } from 'typeorm';
 import {
+  AccountStatus,
   DINE_TYPE_LABELS,
   DineType,
   MerchantStatus,
@@ -14,6 +15,7 @@ import { BusinessException } from '../../../common/exceptions/business.exception
 import { likePattern } from '../../../common/utils/like.util';
 import { Merchant } from '../../../database/entities/merchant.entity';
 import { Store } from '../../../database/entities/store.entity';
+import { StoreTable } from '../../../database/entities/store-table.entity';
 
 /** 顾客可选择的就餐方式，与后端 DineType 同一套机器码。 */
 export interface DineTypeOption {
@@ -53,11 +55,28 @@ export interface ClientStoreListItem extends ClientStoreView {
   distanceText: string | null;
 }
 
+/**
+ * 扫桌位码的落地结果：门店信息 + 这张桌的桌号。
+ *
+ * 桌号由后端从 token 反查得到，小程序端只负责显示与下单时带上 token，
+ * 所以顾客改不了、也拼不出别人的桌号。
+ */
+export interface ClientTableContextView {
+  merchantCode: string;
+  merchantName: string;
+  storeName: string;
+  tableNo: string;
+  area: string | null;
+  seats: number | null;
+  openNow: boolean;
+}
+
 @Injectable()
 export class ClientStoreService {
   constructor(
     @InjectRepository(Merchant) private readonly merchants: Repository<Merchant>,
     @InjectRepository(Store) private readonly stores: Repository<Store>,
+    @InjectRepository(StoreTable) private readonly tables: Repository<StoreTable>,
   ) {}
 
   /**
@@ -70,17 +89,60 @@ export class ClientStoreService {
     if (!merchant) {
       throw new NotFoundException('门店不存在，请确认小程序码或重新选择门店');
     }
+    this.assertMerchantUsable(merchant);
+    return { merchant, store: await this.requireStore(merchant) };
+  }
+
+  /**
+   * 扫桌位码定桌：token -> 商户 + 门店 + 桌号。
+   *
+   * token 全局唯一，所以不必先知道是哪家店；校验顺序与扫码定店一致，
+   * 桌位停用单独给一句提示，顾客才知道是这桌不能用而不是整家店不能用。
+   */
+  async resolveTable(token: string): Promise<ClientTableContextView> {
+    const trimmed = token.trim();
+    const table = trimmed ? await this.tables.findOne({ where: { qrToken: trimmed } }) : null;
+    if (!table) {
+      throw new NotFoundException('桌位二维码无效，请让店员确认后重新扫码');
+    }
+    if (table.status !== AccountStatus.Active) {
+      throw BusinessException.forbidden('该桌位已停用，请联系店员');
+    }
+
+    const merchant = await this.merchants.findOne({ where: { id: table.merchantId } });
+    if (!merchant) {
+      throw new NotFoundException('门店不存在，请确认小程序码或重新选择门店');
+    }
+    this.assertMerchantUsable(merchant);
+    const store = await this.requireStore(merchant);
+
+    return {
+      merchantCode: merchant.code,
+      merchantName: merchant.name,
+      storeName: store.name,
+      tableNo: table.tableNo,
+      area: table.area,
+      seats: table.seats,
+      openNow: store.status === StoreStatus.Open,
+    };
+  }
+
+  /** 商户可用的两个条件：状态 active 且未到期。扫码定店与扫码定桌共用同一口径。 */
+  private assertMerchantUsable(merchant: Merchant): void {
     if (merchant.status !== MerchantStatus.Active) {
       throw BusinessException.forbidden('该门店暂停营业，请联系店家');
     }
     if (merchant.expireAt !== null && merchant.expireAt.getTime() < Date.now()) {
       throw BusinessException.forbidden('该门店服务已到期，暂时无法下单');
     }
+  }
+
+  private async requireStore(merchant: Merchant): Promise<Store> {
     const store = await this.stores.findOne({ where: { merchantId: merchant.id } });
     if (!store) {
       throw new NotFoundException('该门店尚未完成配置');
     }
-    return { merchant, store };
+    return store;
   }
 
   async context(merchantCode: string): Promise<ClientStoreView> {

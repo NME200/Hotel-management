@@ -2,12 +2,12 @@ import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Permissions } from '../../common/decorators/auth.decorators';
 import type { PageResult } from '../../common/dto/page-result.dto';
-import { Member } from '../../database/entities/member.entity';
 import { Permission } from '../../common/constants/permission';
 import { DishQueryDto, type DishBrief } from '../merchant/dish/dto/dish.dto';
-import { MemberQueryDto } from '../merchant/member/dto/member.dto';
 import { OrderQueryDto, type OrderBrief } from '../merchant/order/dto/order.dto';
 import { StaffQueryDto, type StaffView } from '../merchant/staff/dto/staff.dto';
+import { MemberProfileQueryDto } from './member/dto/member.dto';
+import type { MemberProfileRow } from './member/member.service';
 import { MerchantViewService } from './merchant-view.service';
 import type { MerchantStatistics } from './models/merchant-view.model';
 
@@ -49,11 +49,11 @@ export class MerchantViewController {
   }
 
   @Get('members')
-  @ApiOperation({ summary: '商户会员列表（只读）' })
+  @ApiOperation({ summary: '商户会员档案列表（只读，含顾客昵称）' })
   members(
     @Param('merchantId', ParseIntPipe) merchantId: number,
-    @Query() query: MemberQueryDto,
-  ): Promise<PageResult<Member>> {
+    @Query() query: MemberProfileQueryDto,
+  ): Promise<PageResult<MemberProfileRow>> {
     return this.viewService.membersOf(merchantId, query);
   }
 

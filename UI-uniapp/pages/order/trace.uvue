@@ -19,6 +19,8 @@
       <!-- 状态摘要 -->
       <view class="card">
         <text class="status-label">{{ statusLabel }}</text>
+        <!-- 订单是跨门店列表点进来的，取餐码只对那家店有效，必须说清是哪家 -->
+        <text v-if="storeText.length > 0" class="status-desc">{{ storeText }}</text>
         <text v-if="payStatusText.length > 0" class="status-desc">{{ '支付状态：' + payStatusText }}</text>
         <text class="status-meta">{{ dineText }}</text>
         <!-- 出餐倒计时：28rpx 深色强调（规范 9.6） -->
@@ -60,7 +62,7 @@
         <text class="card-title">菜品</text>
         <view v-for="item in items" :key="item.id" class="item-row">
           <view class="thumb-box">
-            <image v-if="item.dishImage != null" class="thumb" :src="item.dishImage!" mode="aspectFill"></image>
+            <image v-if="imageUrl(item.dishImage) != ''" class="thumb" :src="imageUrl(item.dishImage)" mode="aspectFill"></image>
             <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(item.dishName) }}</text></view>
           </view>
           <view class="item-main">
@@ -130,7 +132,7 @@
   import { isLogged } from '../../common/session.uts'
   import { cancelOrder, createPayment, fetchOrder, fetchPaymentChannels, fetchPaymentStatus } from '../../common/api.uts'
   import { OrderBrief, OrderItemView, OrderStep, OrderTrace, PaymentChannelOption } from '../../common/models.uts'
-  import { amountText, countdownText, shortTime } from '../../common/format.uts'
+  import { amountText, countdownText, imageUrl, shortTime } from '../../common/format.uts'
   import { toast } from '../../common/request.uts'
 
   const orderNo = ref('')
@@ -150,6 +152,16 @@
   let pollTimer = -1
 
   const order = computed(() : OrderBrief | null => trace.value == null ? null : trace.value!.order)
+  /**
+   * 这张单属于哪家店。
+   *
+   * 订单列表现在是跨门店的，从别家的单点进来时当前门店并不是下单的那家；
+   * 支付渠道与 JSAPI 凭据都按门店配置，所以支付三个接口要显式带这个编号。
+   */
+  const orderStoreCode = computed(() : string => {
+    const value = order.value == null ? null : order.value!.storeCode
+    return value == null ? '' : value!
+  })
   const steps = computed(() : OrderStep[] => trace.value == null ? ([] as OrderStep[]) : trace.value!.steps)
   const items = computed(() : OrderItemView[] => order.value == null ? ([] as OrderItemView[]) : order.value!.items)
   const statusLabel = computed(() : string => order.value == null ? '' : order.value!.statusLabel)
@@ -171,6 +183,11 @@
   const remarkText = computed(() : string => {
     const value = order.value == null ? null : order.value!.remark
     return value == null ? '' : value!
+  })
+  /** 「门店：XX 小馆」——只在后端带回了所属门店时出现（跨门店订单）。 */
+  const storeText = computed(() : string => {
+    const value = order.value == null ? null : order.value!.storeName
+    return value == null ? '' : '门店：' + value!
   })
   const handleRemarkText = computed(() : string => {
     const value = order.value == null ? null : order.value!.handleRemark
@@ -263,7 +280,7 @@
   }
 
   async function loadChannels() : Promise<void> {
-    channels.value = await fetchPaymentChannels()
+    channels.value = await fetchPaymentChannels(orderStoreCode.value)
     channelsFetched.value = true
     tryAutopay()
   }
@@ -378,7 +395,7 @@
   async function pollPayment(paymentNo: string) : Promise<void> {
     for (let i = 0; i < 6; i++) {
       await waitMs(1500)
-      const view = await fetchPaymentStatus(paymentNo)
+      const view = await fetchPaymentStatus(paymentNo, orderStoreCode.value)
       if (view == null) {
         continue
       }
@@ -416,7 +433,7 @@
     }
     paying.value = true
     const channel = channels.value[0].value
-    const payment = await createPayment(o!.orderNo, channel)
+    const payment = await createPayment(o!.orderNo, channel, orderStoreCode.value)
     if (payment == null) {
       paying.value = false
       return

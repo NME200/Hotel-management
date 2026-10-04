@@ -24,6 +24,7 @@ import { PlatformPaymentService } from './platform-payment.service';
 import { PlatformProfitShareController } from './platform-profit-share.controller';
 import { PlatformReconcileController } from './platform-reconcile.controller';
 import { MockPaymentProvider } from './providers/mock.provider';
+import { CashPaymentProvider, OfflineScanPaymentProvider } from './providers/offline.provider';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 import { PaymentProfitShareService } from './services/payment-profit-share.service';
 import { PaymentReconcileService } from './services/payment-reconcile.service';
@@ -33,9 +34,11 @@ import { PlatformReconcileService } from './services/platform-reconcile.service'
 /**
  * 支付域。
  *
- * 目前只挂 mock 渠道：微信服务商与支付宝 ISV 的实现等资质到位后，
- * 各自新增一个 provider 并在 PaymentProviderRegistry 注册即可，
- * 下单/回调/退款/关单/配置这套主流程不需要改动。
+ * 已注册三类渠道实现：
+ * - `mock`：资质未就绪时跑通全链路（仅非生产）；
+ * - `cash` / `offline`：收银台的现金与收款码，进程内即时成功，走同一条状态机；
+ * - 微信服务商与支付宝 ISV 的实现等资质到位后各自新增一个 provider 并注册即可，
+ *   下单/回调/退款/关单/配置这套主流程不需要改动。
  */
 @Module({
   imports: [
@@ -74,6 +77,8 @@ import { PlatformReconcileService } from './services/platform-reconcile.service'
     PlatformReconcileService,
     PaymentProviderRegistry,
     MockPaymentProvider,
+    CashPaymentProvider,
+    OfflineScanPaymentProvider,
   ],
   exports: [PaymentService, PaymentConfigService, PaymentProfitShareService, PaymentReconcileService],
 })

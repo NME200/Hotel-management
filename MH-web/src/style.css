@@ -85,3 +85,63 @@ a {
 .el-form-item__error {
   white-space: nowrap;
 }
+
+/*
+ * 侧栏配色与选中态，与平台端同一套口径。
+ *
+ * 放全局而不是组件 scoped 里：主菜单与底部低频菜单是两个 el-menu 实例，
+ * 且收起态的子菜单弹出层挂在 <body> 下，组件里够不到它。
+ * 选中态用「渐变底 + 左侧竖条」：深色栏上 Element 默认的「整行稍微变亮」几乎看不出来。
+ */
+.sidebar .el-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: #c3cbe0;
+  --el-menu-hover-bg-color: rgb(255 255 255 / 6%);
+  --el-menu-active-color: #ffffff;
+
+  background-color: transparent;
+}
+
+.sidebar .el-menu-item,
+.sidebar .el-sub-menu__title {
+  position: relative;
+}
+
+.sidebar .el-menu-item:hover,
+.sidebar .el-sub-menu__title:hover {
+  background-color: rgb(255 255 255 / 6%);
+}
+
+.sidebar .el-menu-item.is-active {
+  background: linear-gradient(90deg, rgb(79 124 255 / 34%) 0%, rgb(79 124 255 / 6%) 100%);
+}
+
+.sidebar .el-menu-item.is-active::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 18px;
+  margin-top: -9px;
+  background: #7f9dff;
+  border-radius: 0 3px 3px 0;
+  content: '';
+}
+
+.sidebar .el-menu-item-group__title {
+  padding: 16px 16px 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #6b7896;
+}
+
+/* 底部低频项：比主菜单再暗一档，避免和日常动线抢注意力 */
+.sidebar__menu--foot {
+  --el-menu-text-color: #8a97b3;
+}
+
+/* 收起态弹层是浅色卡片，选中态同样要能看出来 */
+.el-menu--popup .el-menu-item.is-active {
+  color: #4f7cff;
+  background: #eef2ff;
+}

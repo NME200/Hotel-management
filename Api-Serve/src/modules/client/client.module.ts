@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Activity } from '../../database/entities/activity.entity';
 import { Category } from '../../database/entities/category.entity';
+import { Customer } from '../../database/entities/customer.entity';
 import { CouponTemplate } from '../../database/entities/coupon-template.entity';
 import { Dish } from '../../database/entities/dish.entity';
 import { DishOptionGroup } from '../../database/entities/dish-option-group.entity';
@@ -15,16 +16,17 @@ import { OrderItem } from '../../database/entities/order-item.entity';
 import { Payment } from '../../database/entities/payment.entity';
 import { Promotion } from '../../database/entities/promotion.entity';
 import { Store } from '../../database/entities/store.entity';
+import { StoreTable } from '../../database/entities/store-table.entity';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
 import { MemberGrowthModule } from '../member-growth/member-growth.module';
 import { PaymentModule } from '../payment/payment.module';
 import { ClientAuthController } from './auth/client-auth.controller';
 import { ClientAuthService } from './auth/client-auth.service';
+import { ClientMemberResolver } from './auth/client-member.resolver';
 import { PlatformMiniProgramConfigController } from './config/platform-mini-program.controller';
 import { ClientActivityController } from './activity/client-activity.controller';
 import { ClientActivityService } from './activity/client-activity.service';
-import { MiniProgramConfigService } from './config/mini-program-config.service';
 import { MiniProgramConnectivityService } from './config/mini-program-connectivity.service';
 import { ClientCouponController } from './coupon/client-coupon.controller';
 import { ClientCouponService } from './coupon/client-coupon.service';
@@ -40,7 +42,9 @@ import { ClientPaymentService } from './payment/client-payment.service';
 import { ClientPromotionService } from './promotion/client-promotion.service';
 import { ClientStoreController } from './store/client-store.controller';
 import { ClientStoreService } from './store/client-store.service';
-import { WechatMiniService } from './wechat/wechat-mini.service';
+import { MiniProgramConfigModule } from './config/mini-program-config.module';
+import { WechatModule } from './wechat/wechat.module';
+import { SmsModule } from '../sms/sms.module';
 
 /**
  * 顾客端（微信小程序）接口域，外加平台端的小程序配置。
@@ -57,6 +61,7 @@ import { WechatMiniService } from './wechat/wechat-mini.service';
     TypeOrmModule.forFeature([
       Merchant,
       Store,
+      Customer,
       Activity,
       Category,
       Dish,
@@ -70,11 +75,18 @@ import { WechatMiniService } from './wechat/wechat-mini.service';
       MiniProgramConfig,
       Payment,
       Promotion,
+      // 扫桌位码定桌与堂食下单都要按 token 反查桌位
+      StoreTable,
     ]),
     AuthModule,
     AuditModule,
     PaymentModule,
     MemberGrowthModule,
+    // 小程序凭据与微信接口独立成模块：商家端生成桌位码也要用同一份凭据与 access_token 缓存
+    MiniProgramConfigModule,
+    WechatModule,
+    // 手机号验证码登录：短信通道与节流都在这个模块里，顾客端只是它的一个调用方
+    SmsModule,
   ],
   controllers: [
     PlatformMiniProgramConfigController,
@@ -88,19 +100,24 @@ import { WechatMiniService } from './wechat/wechat-mini.service';
     ClientPaymentController,
   ],
   providers: [
-    MiniProgramConfigService,
     MiniProgramConnectivityService,
-    WechatMiniService,
     ClientStoreService,
     ClientMenuService,
     ClientActivityService,
     ClientPromotionService,
     ClientAuthService,
+    ClientMemberResolver,
     ClientMemberService,
     ClientCouponService,
     ClientOrderPriceService,
     ClientOrderService,
     ClientPaymentService,
   ],
+  /**
+   * 算价服务对外导出：商家端收银台的线下点餐复用同一套算价逻辑。
+   * 会员价、活动价取低、打包费与配送费口径只此一份 ——
+   * 「收银台看到的价」与「小程序看到的价」不可能算出两个数。
+   */
+  exports: [ClientOrderPriceService],
 })
 export class ClientModule {}

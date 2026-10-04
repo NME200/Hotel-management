@@ -1,4 +1,5 @@
 import type { PageQuery } from './common'
+import type { MemberLevel, MemberStatus, MemberProfileRow } from './member'
 
 /* ------------------------- 字面量联合（与后端枚举一一对应） ------------------------- */
 
@@ -9,12 +10,6 @@ export type DishStockType = 'unlimited' | 'fixed'
 export type OrderStatus = 'pending' | 'accepted' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'refunded'
 
 export type DineType = 'dine_in' | 'takeout' | 'pickup'
-
-export type MemberLevel = 'normal' | 'silver' | 'gold' | 'vip'
-
-export type MemberGender = 'unknown' | 'male' | 'female'
-
-export type MemberStatus = 'active' | 'disabled'
 
 export type StaffRole = 'owner' | 'manager' | 'cashier' | 'kitchen' | 'waiter'
 
@@ -103,24 +98,17 @@ export interface PlatformOrderListParams extends PageQuery {
 
 /* --------------------------------- 会员 --------------------------------- */
 
-export interface PlatformMember {
-  id: number
-  nickname: string
-  avatar: string | null
-  phone: string
-  gender: MemberGender
-  level: MemberLevel
-  points: number
-  balance: number
-  totalAmount: number
-  orderCount: number
-  remark: string | null
-  status: MemberStatus
-  lastOrderAt: string | null
-  createdAt: string
-}
+/**
+ * 会员身份分层后，商户维度看到的就是一张张门店档案，
+ * 与平台会员页同一份行结构（后端复用 PlatformMemberService 的档案装配）。
+ * 老的头像 / 手机号 / 性别 / 注册时间属于顾客账号那一层，这里已经不再下发。
+ */
+export type PlatformMember = MemberProfileRow
 
-export interface PlatformMemberListParams extends PageQuery {
+/** 档案列表没有关键字检索：后端只按等级与状态过滤，merchantId 走路径参数 */
+export interface PlatformMemberListParams {
+  page?: number
+  pageSize?: number
   level?: MemberLevel
   status?: MemberStatus
 }

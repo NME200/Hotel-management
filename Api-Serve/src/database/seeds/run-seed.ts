@@ -2,6 +2,7 @@ import { DineType, MemberLevel, OrderStatus, StoreStatus } from '../../common/co
 import { generateOrderNo, generatePickupCode } from '../../common/utils/id.util';
 import { hashPassword } from '../../common/utils/password.util';
 import { Category } from '../entities/category.entity';
+import { Customer } from '../entities/customer.entity';
 import { Dish } from '../entities/dish.entity';
 import { DishOptionGroup } from '../entities/dish-option-group.entity';
 import { DishSku } from '../entities/dish-sku.entity';
@@ -214,12 +215,22 @@ async function seedMembers(
   merchantId: number,
   seed: MerchantSeed,
 ): Promise<void> {
-  await manager.getRepository(Member).insert(
-    seed.members.map((member) => ({
+  // 一个演示会员 = 一个跨店账号（customer）+ 这家店的一份档案（member）。
+  // 身份列已经不在 member 上了，这里分开写正是为了让 seed 也遵守这个边界。
+  for (const member of seed.members) {
+    const customer = await manager.getRepository(Customer).save(
+      manager.getRepository(Customer).create({
+        nickname: member.nickname,
+        phone: member.phone,
+        gender: member.gender,
+        status: 'active',
+        registerSource: 'mini_program',
+      }),
+    );
+
+    await manager.getRepository(Member).insert({
       merchantId,
-      nickname: member.nickname,
-      phone: member.phone,
-      gender: member.gender,
+      customerId: customer.id,
       level: member.level,
       points: member.points,
       balance: member.balance,
@@ -227,8 +238,8 @@ async function seedMembers(
       orderCount: 0,
       status: 'active',
       registerSource: 'mini_program',
-    })),
-  );
+    });
+  }
 }
 
 async function seedOrders(
@@ -242,7 +253,10 @@ async function seedOrders(
   }
 
   const random = createRandom(seed.code.length * 7919 + seed.orderCount);
-  const members = await manager.getRepository(Member).find({ where: { merchantId } });
+  const members = await manager.getRepository(Member).find({
+    where: { merchantId },
+    relations: { customer: true },
+  });
   const orderRepository = manager.getRepository(Order);
   const itemRepository = manager.getRepository(OrderItem);
 
@@ -279,7 +293,7 @@ async function seedOrders(
       orderNo: generateOrderNo(createdAt),
       pickupCode: generatePickupCode(),
       memberId: member?.id ?? null,
-      memberNickname: member?.nickname ?? null,
+      memberNickname: member?.customer.nickname ?? null,
       dineType,
       status,
       tableNo: dineType === DineType.DineIn ? `${1 + Math.floor(random() * 12)} 号桌` : null,

@@ -147,7 +147,7 @@
   import { fetchDish } from '../../common/api.uts'
   import { DishBrief, DishDetail, OptionGroup, Sku } from '../../common/models.uts'
   import { CartLine, CartOptionSelection, add, lineKey } from '../../common/cart.uts'
-  import { amountText, salesText } from '../../common/format.uts'
+  import { amountText, imageUrl, salesText } from '../../common/format.uts'
   import {
     estimateUnitPrice,
     memberTipText,
@@ -187,8 +187,7 @@
     if (value == null) {
       return ''
     }
-    const image = value!.image
-    return image == null ? '' : image!
+    return imageUrl(value!.image)
   })
   const heroChar = computed(() : string => {
     const name = title.value
@@ -274,8 +273,7 @@
 
   /** 搭配推荐卡片没有图时用首字兜底，取不到就返回空串让模板走兜底块。 */
   function srcOf(item: DishBrief) : string {
-    const image = item.image
-    return image == null ? '' : image!
+    return imageUrl(item.image)
   }
 
   /** 差价一律明示在标签里（规范 8.3），没有差价就不加后缀。 */

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { Customer } from '../../database/entities/customer.entity';
 import { Dish } from '../../database/entities/dish.entity';
 import { Member } from '../../database/entities/member.entity';
 import { Merchant } from '../../database/entities/merchant.entity';
@@ -18,6 +19,8 @@ import { MerchantController } from './merchant.controller';
 import { MerchantService } from './merchant.service';
 import { MerchantViewController } from './merchant-view.controller';
 import { MerchantViewService } from './merchant-view.service';
+import { PlatformMemberController } from './member/member.controller';
+import { PlatformMemberService } from './member/member.service';
 
 /**
  * 平台端模块：商户开通与审核、平台账号、跨租户看板与只读穿透。
@@ -35,6 +38,7 @@ import { MerchantViewService } from './merchant-view.service';
       Dish,
       Order,
       Member,
+      Customer,
     ]),
     AuditModule,
     MerchantModule,
@@ -42,12 +46,14 @@ import { MerchantViewService } from './merchant-view.service';
   controllers: [
     MerchantController,
     MerchantViewController,
+    PlatformMemberController,
     AccountController,
     PlatformDashboardController,
   ],
   providers: [
     MerchantService,
     MerchantViewService,
+    PlatformMemberService,
     AccountService,
     PlatformDashboardService,
   ],

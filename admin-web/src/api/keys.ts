@@ -24,4 +24,11 @@ export const QUERY_KEYS = {
   platformReconciles: ['platform', 'reconciliations'] as const,
   /** 小程序配置：全局单条配置，读取与保存后整体失效 */
   miniProgramConfig: ['platform', 'mini-program-config'] as const,
+  /** 云打印机厂商配置：飞鹅与易联云两张卡片，整体失效 */
+  printProviders: ['platform', 'print-providers'] as const,
+  smsConfig: ['platform', 'sms-config'] as const,
+  /** 平台会员：顾客账号列表 / 门店档案 / 详情共用此前缀，启停与备注改完整体失效 */
+  platformMembers: ['platform', 'members'] as const,
+  platformMemberProfiles: ['platform', 'members', 'profiles'] as const,
+  platformMemberDetail: ['platform', 'members', 'detail'] as const,
 }

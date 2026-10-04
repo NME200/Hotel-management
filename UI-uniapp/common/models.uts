@@ -48,6 +48,36 @@ export function parseStoreList(o: UTSJSONObject | null): StoreContext[] {
   return objArray(o, "list").map((item) => parseStore(item));
 }
 
+/* ------------------------------ 桌位 ------------------------------ */
+
+/**
+ * 扫桌位码的落地结果。
+ *
+ * 桌号由后端用 token 反查得到，小程序只负责显示与在结算时把 token 原样传回 ——
+ * 前端不参与桌号的产生，所以顾客改不了、也拼不出别人的桌号。
+ */
+export type TableContext = {
+  merchantCode: string;
+  merchantName: string;
+  storeName: string;
+  tableNo: string;
+  area: string | null;
+  seats: number | null;
+  openNow: boolean;
+};
+
+export function parseTableContext(o: UTSJSONObject): TableContext {
+  return {
+    merchantCode: str(o, "merchantCode"),
+    merchantName: str(o, "merchantName"),
+    storeName: str(o, "storeName"),
+    tableNo: str(o, "tableNo"),
+    area: optStr(o, "area"),
+    seats: optNum(o, "seats"),
+    openNow: boolv(o, "openNow"),
+  };
+}
+
 /* ------------------------------ 菜品 ------------------------------ */
 
 export type DishBrief = {
@@ -486,6 +516,12 @@ export type OrderBrief = {
   payAmount: number;
   remark: string | null;
   handleRemark: string | null;
+  /**
+   * 订单所属门店。账号跨门店后「我的订单」混着展示各家的单，
+   * 靠这两个字段告诉顾客这是哪家的单，也靠 storeCode 直接在那家店付款。
+   */
+  storeName: string | null;
+  storeCode: string | null;
   createdAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
@@ -515,6 +551,8 @@ export function parseOrder(o: UTSJSONObject): OrderBrief {
     payAmount: num(o, "payAmount"),
     remark: optStr(o, "remark"),
     handleRemark: optStr(o, "handleRemark"),
+    storeName: optStr(o, "storeName"),
+    storeCode: optStr(o, "storeCode"),
     createdAt: optStr(o, "createdAt"),
     cancelledAt: optStr(o, "cancelledAt"),
     cancelReason: optStr(o, "cancelReason"),
@@ -697,6 +735,11 @@ export type LoginResult = {
   accessToken: string;
   refreshToken: string;
   isNewMember: boolean;
+  /**
+   * 带手机号授权时后端回的一句结果说明：没绑成的原因（号被别的微信号占着、
+   * 同店已有两份档案需要人工合并等）。null 表示这次绑定没问题。
+   */
+  phoneNote: string | null;
   member: MemberBrief | null;
   store: StoreContext | null;
 };
@@ -709,6 +752,7 @@ export function parseLogin(o: UTSJSONObject | null): LoginResult | null {
     accessToken: str(o, "accessToken"),
     refreshToken: str(o, "refreshToken"),
     isNewMember: boolv(o, "isNewMember"),
+    phoneNote: optStr(o, "phoneNote"),
     member: parseMember(child(o, "member")),
     store: child(o, "store") == null ? null : parseStore(child(o, "store")!),
   };

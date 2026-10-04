@@ -38,6 +38,14 @@ export interface ClientOrderBriefView {
   payAmount: number;
   remark: string | null;
   handleRemark: string | null;
+  /**
+   * 订单所属门店名/编号。
+   *
+   * 顾客账号跨店之后「我的订单」是全部门的单，没有这两个字段就分不清哪条是哪家店的；
+   * 单店列表里它们为 null，前端据此决定要不要显示。
+   */
+  storeName: string | null;
+  storeCode: string | null;
   createdAt: Date;
   acceptedAt: Date | null;
   readyAt: Date | null;

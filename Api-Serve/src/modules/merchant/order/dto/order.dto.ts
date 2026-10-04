@@ -60,4 +60,6 @@ export interface OrderSummary {
   pendingCount: number;
   completedCount: number;
   cancelledCount: number;
+  /** 还活着但没收到钱的单：收银台「今日待收款」用它，避免收银员漏收 */
+  unpaidCount: number;
 }

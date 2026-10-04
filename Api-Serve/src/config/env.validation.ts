@@ -30,6 +30,11 @@ export class EnvVariables {
   @MinLength(1)
   ALLOWED_HOSTS!: string;
 
+  /** 信任的反向代理跳数；留空则生产默认 1、开发默认 0 */
+  @IsOptional()
+  @IsString()
+  TRUST_PROXY?: string;
+
   @IsString()
   DB_HOST!: string;
 
@@ -155,6 +160,67 @@ export class EnvVariables {
   @IsString()
   CONFIG_ENCRYPTION_KEY?: string;
 
+  // ---------- 图片上传：缺配置就用默认值，不影响启动 ----------
+
+  @IsOptional()
+  @IsString()
+  UPLOAD_DIR?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  UPLOAD_MAX_MB?: number;
+
+  /** local（默认）或 s3；s3 的必填项在 configuration 里统一校验 */
+  @IsOptional()
+  @IsIn(['local', 's3', 'LOCAL', 'S3'])
+  UPLOAD_DRIVER?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_REGION?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_ENDPOINT?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_ACCESS_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_SECRET_ACCESS_KEY?: string;
+
+  @IsOptional()
+  @IsIn(TRUE_FALSE)
+  S3_FORCE_PATH_STYLE?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_PUBLIC_BASE_URL?: string;
+
+  // ---------- 接口限流：缺配置用默认值，不影响启动 ----------
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  THROTTLE_TTL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  THROTTLE_LIMIT?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  THROTTLE_LOGIN_LIMIT?: number;
+
   // ---------- 顾客小程序：平台后台「小程序配置」为优先来源，这里只是兜底 ----------
 
   @IsOptional()
@@ -164,4 +230,98 @@ export class EnvVariables {
   @IsOptional()
   @IsString()
   MINI_APP_SECRET?: string;
+
+  /** 生成桌位小程序码时的小程序版本：release | trial | develop，默认 release */
+  @IsOptional()
+  @IsString()
+  MINI_ENV_VERSION?: string;
+
+  /** 桌位码扫码后落地的小程序页面，默认 pages/index/index */
+  @IsOptional()
+  @IsString()
+  MINI_QR_PAGE?: string;
+
+  // ---------- 云打印机厂商：与支付渠道同理，全部可选，缺配置即该厂商不可用 ----------
+
+  // ---------- 短信验证码：全可选；不配就只能用手机号一键授权那条路登录 ----------
+
+  @IsOptional()
+  @IsIn(['log', 'aliyun', 'tencent', 'custom'])
+  SMS_DRIVER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_ALIYUN_ACCESS_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_ALIYUN_ACCESS_KEY_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_TENCENT_SECRET_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_TENCENT_SECRET_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_TENCENT_SDK_APP_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_CUSTOM_ENDPOINT?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_CUSTOM_AUTH_HEADER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_CUSTOM_BODY_TEMPLATE?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_CUSTOM_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_SIGN_NAME?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_TEMPLATE_CODE?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_REGION?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_ENDPOINT?: string;
+
+  @IsOptional()
+  @IsString()
+  FEIE_UID?: string;
+
+  @IsOptional()
+  @IsString()
+  FEIE_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  FEIE_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  YILIANYUN_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  YILIANYUN_CLIENT_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  YILIANYUN_BASE_URL?: string;
 }

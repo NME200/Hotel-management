@@ -117,6 +117,8 @@ export const MERCHANT_SEEDS: MerchantSeed[] = [
       { username: 'manager', password: 'Manager@123', realName: '李四', phone: '13800000002', role: StaffRole.Manager },
       { username: 'cashier', password: 'Cashier@123', realName: '王五', phone: '13800000003', role: StaffRole.Cashier },
       { username: 'kitchen', password: 'Kitchen@123', realName: '赵六', phone: '13800000004', role: StaffRole.Kitchen },
+      // 服务员：能开台清台，但进不了收银台 —— 用来验证 table:operate 与 cashier:use 是两回事
+      { username: 'waiter', password: 'Waiter@123', realName: '小李', phone: '13800000005', role: StaffRole.Waiter },
     ],
     categories: [
       {

@@ -92,7 +92,7 @@ export class ClientOrderPriceService {
 
   async price(
     merchantId: number,
-    memberId: number,
+    memberId: number | null,
     dineType: DineType,
     items: ClientOrderItemDto[],
     couponId?: number,
@@ -109,7 +109,8 @@ export class ClientOrderPriceService {
       this.dataSource
         .getRepository(DishOptionGroup)
         .find({ where: { merchantId, dishId: In(dishIds) } }),
-      this.members.findById(merchantId, memberId),
+      // 散客单（收银台线下点餐）没有会员档案，会员价一律不生效
+      memberId ? this.members.findById(merchantId, memberId) : Promise.resolve(null),
       this.promotions.activeOf(merchantId),
     ]);
 
@@ -167,6 +168,11 @@ export class ClientOrderPriceService {
     let discountCents = 0;
     let coupon: MemberCoupon | null = null;
     if (couponId) {
+      // 券挂在会员档案上：散客单（收银台线下点餐）没有档案可用，
+      // 静默忽略会让收银员以为已经抵扣了，所以直接拒。
+      if (!memberId) {
+        throw BusinessException.badRequest('散客单不能使用优惠券，请先识别会员');
+      }
       const couponLines: CouponLineInput[] = lines.map((line) => ({
         dishId: line.dishId,
         categoryId: line.categoryId,
@@ -264,9 +270,9 @@ export class ClientOrderPriceService {
     return { optionText: texts.join(' / '), optionCents };
   }
 
-  /** 会员立减额 = 基础价 - 会员价；没有会员价或没有优惠时返回 null。 */
-  private memberCents(dish: Dish, member: Member): number | null {
-    if (dish.memberPrice === null || member.status === 'disabled') {
+  /** 会员立减额 = 基础价 - 会员价；没有会员、没有会员价或会员被停用时返回 null。 */
+  private memberCents(dish: Dish, member: Member | null): number | null {
+    if (!member || dish.memberPrice === null || member.status === 'disabled') {
       return null;
     }
     const delta = toCents(dish.price) - toCents(dish.memberPrice);

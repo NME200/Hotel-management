@@ -1,4 +1,7 @@
-/** 接口只用相对路径，dev 由 vite proxy 转发，生产由同域反代承接，禁止写死域名与端口 */
+/**
+ * 接口只用相对路径，dev 由 vite proxy 转发，生产由同域反代承接，禁止写死域名与端口。
+ * 后端实际地址（IP/端口）只有一个地方：`src/request.ts`，proxy 从那里读。
+ */
 export const API_BASE_URL = '/api/v1'
 
 export const REQUEST_TIMEOUT = 15000

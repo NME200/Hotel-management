@@ -1,28 +1,28 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
-import { Refresh, Search, User } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 
 import { fetchMerchantMembers } from '@/api/merchant-insight'
 import { QUERY_KEYS } from '@/api/keys'
-import type { MemberLevel, MemberStatus, PlatformMember, PlatformMemberListParams } from '@/api/types/merchant-insight'
+import type { PlatformMember, PlatformMemberListParams } from '@/api/types/merchant-insight'
+import type { MemberLevel, MemberStatus } from '@/api/types/member'
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '@/constants/api'
-import { MEMBER_GENDER_DICT, MEMBER_LEVEL_DICT, MEMBER_LEVEL_OPTIONS, MEMBER_STATUS_DICT, MEMBER_STATUS_OPTIONS, dictLabel } from '@/constants/dictionary'
-import { formatMoney } from '@/utils/format'
+import { MEMBER_LEVEL_DICT, MEMBER_LEVEL_OPTIONS, MEMBER_STATUS_DICT, MEMBER_STATUS_OPTIONS, dictTagType } from '@/constants/dictionary'
+import { formatCount, formatMoney } from '@/utils/format'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import TimeText from '@/components/common/TimeText.vue'
 
 const props = defineProps<{ merchantId: number }>()
 
-const keyword = ref('')
+/** 档案接口不支持关键字检索，只能按等级与状态过滤 */
 const level = ref<MemberLevel | undefined>(undefined)
 const status = ref<MemberStatus | undefined>(undefined)
 const page = ref(DEFAULT_PAGE)
 const pageSize = ref(DEFAULT_PAGE_SIZE)
 
 const queryParams = computed<PlatformMemberListParams>(() => ({
-  keyword: keyword.value.trim() || undefined,
   level: level.value,
   status: status.value,
   page: page.value,
@@ -44,7 +44,6 @@ function handleSearch(): void {
 }
 
 function handleReset(): void {
-  keyword.value = ''
   level.value = undefined
   status.value = undefined
   page.value = DEFAULT_PAGE
@@ -55,18 +54,6 @@ function handleReset(): void {
   <div class="member-tab">
     <div class="member-tab__toolbar">
       <el-space wrap :size="12">
-        <el-input
-          v-model="keyword"
-          placeholder="昵称 / 手机号"
-          clearable
-          class="toolbar-input"
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
         <el-select v-model="level" placeholder="全部等级" clearable class="toolbar-select" @change="handleSearch">
           <el-option v-for="item in MEMBER_LEVEL_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
@@ -82,30 +69,35 @@ function handleReset(): void {
       </el-button>
     </div>
 
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="这里是这一家店的会员档案（只读）；账号信息与启停请到「会员管理」页操作。"
+      class="member-tab__alert"
+    />
+
     <el-table v-loading="memberQuery.isFetching.value" :data="rows" border stripe size="small">
-      <el-table-column label="会员" min-width="180">
+      <el-table-column label="顾客" min-width="160">
         <template #default="{ row }: { row: PlatformMember }">
-          <div class="cell-member">
-            <el-avatar :size="32" :src="row.avatar">
-              <el-icon><User /></el-icon>
-            </el-avatar>
-            <div class="cell-text">
-              <span class="text-ellipsis">{{ row.nickname || '未命名会员' }}</span>
-              <p class="table-sub-text">{{ row.phone || '未绑定手机号' }}</p>
-            </div>
+          <div class="cell-text">
+            <span class="text-ellipsis">{{ row.nickname || '未命名顾客' }}</span>
+            <p class="table-sub-text">账号 ID {{ row.customerId }}</p>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="等级" width="100" align="center">
+      <el-table-column label="等级" width="110" align="center">
         <template #default="{ row }: { row: PlatformMember }">
-          <StatusTag :item="MEMBER_LEVEL_DICT[row.level]" />
+          <el-tag :type="dictTagType(MEMBER_LEVEL_DICT, row.level)" size="small" effect="light">
+            {{ row.levelLabel }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="性别" width="80" align="center">
-        <template #default="{ row }: { row: PlatformMember }">{{ dictLabel(MEMBER_GENDER_DICT, row.gender) }}</template>
+      <el-table-column label="成长值" width="90" align="center">
+        <template #default="{ row }: { row: PlatformMember }">{{ formatCount(row.growthValue) }}</template>
       </el-table-column>
       <el-table-column label="积分" width="90" align="center">
-        <template #default="{ row }: { row: PlatformMember }">{{ row.points }}</template>
+        <template #default="{ row }: { row: PlatformMember }">{{ formatCount(row.points) }}</template>
       </el-table-column>
       <el-table-column label="余额" width="110" align="right">
         <template #default="{ row }: { row: PlatformMember }">{{ formatMoney(row.balance) }}</template>
@@ -114,13 +106,8 @@ function handleReset(): void {
         <template #default="{ row }: { row: PlatformMember }">
           <div class="cell-amount">
             <span>{{ formatMoney(row.totalAmount) }}</span>
-            <p class="table-sub-text">{{ row.orderCount }} 单</p>
+            <p class="table-sub-text">{{ formatCount(row.orderCount) }} 单</p>
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="最近下单" width="120">
-        <template #default="{ row }: { row: PlatformMember }">
-          <TimeText :value="row.lastOrderAt" mode="date" placeholder="暂无" />
         </template>
       </el-table-column>
       <el-table-column label="状态" width="90" align="center">
@@ -130,16 +117,18 @@ function handleReset(): void {
       </el-table-column>
       <el-table-column label="备注" min-width="140">
         <template #default="{ row }: { row: PlatformMember }">
-          <span v-if="row.remark" class="text-ellipsis">{{ row.remark }}</span>
+          <span v-if="row.remark" class="text-ellipsis" :title="row.remark">{{ row.remark }}</span>
           <span v-else class="text-muted">无</span>
         </template>
       </el-table-column>
-      <el-table-column label="注册时间" width="130">
-        <template #default="{ row }: { row: PlatformMember }"><TimeText :value="row.createdAt" mode="date" /></template>
+      <el-table-column label="最近下单" width="120">
+        <template #default="{ row }: { row: PlatformMember }">
+          <TimeText :value="row.lastOrderAt" mode="date" placeholder="暂无" />
+        </template>
       </el-table-column>
       <template #empty>
         <el-empty
-          :description="memberQuery.isError.value ? '暂无数据，请确认后端服务已启动' : '该商户暂无会员'"
+          :description="memberQuery.isError.value ? '暂无数据，请确认后端服务已启动' : '该商户暂无会员档案'"
           :image-size="60"
         />
       </template>
@@ -164,19 +153,12 @@ function handleReset(): void {
   margin-bottom: 12px;
 }
 
-.toolbar-input {
-  width: 180px;
+.member-tab__alert {
+  margin-bottom: 12px;
 }
 
 .toolbar-select {
   width: 120px;
-}
-
-.cell-member {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
 }
 
 .cell-amount {

@@ -13,17 +13,16 @@ import type {
   RefundStatus,
 } from '@/api/types/payment'
 import type { MiniProgramConfigSource } from '@/api/types/mini-program'
+import type { PrintProvider } from '@/api/types/print-provider'
 import type {
   DineType,
   DishStatus,
   DishStockType,
-  MemberGender,
-  MemberLevel,
-  MemberStatus,
   OrderStatus,
   StaffRole,
   StaffStatus,
 } from '@/api/types/merchant-insight'
+import type { MemberGender, MemberLevel, MemberStatus, RegisterSource } from '@/api/types/member'
 
 /** Element Plus el-tag 的 type 取值 */
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
@@ -132,6 +131,38 @@ export const PAYMENT_FIELD_LABEL: Readonly<Record<string, string>> = {
 export function paymentFieldLabel(field: string, secretFields: readonly { name: string; label: string }[]): string {
   const secret = secretFields.find((item) => item.name === field)
   return secret?.label ?? PAYMENT_FIELD_LABEL[field] ?? field
+}
+
+/* ------------------------------ 云打印机厂商 ------------------------------ */
+
+export const PRINT_PROVIDER_OPTIONS: readonly DictOption<PrintProvider>[] = [
+  { value: 'feie', label: '飞鹅云打印机', tag: 'primary' },
+  { value: 'yilianyun', label: '易联云打印机', tag: 'success' },
+]
+
+export const PRINT_PROVIDER_DICT = buildDictMap(PRINT_PROVIDER_OPTIONS)
+
+/** 与支付渠道共用同一张「配置来源」表：语义完全一致，不另开一份 */
+export const PRINT_CONFIG_SOURCE_OPTIONS = PAYMENT_CONFIG_SOURCE_OPTIONS
+export const PRINT_CONFIG_SOURCE_DICT = PAYMENT_CONFIG_SOURCE_DICT
+
+/**
+ * 厂商缺失字段的中文名兜底：后端 missingFields 下发英文 key，
+ * 优先用 secretFields 里的 label，其次查这张表，查不到就原样展示，不编造文案。
+ */
+export const PRINT_PROVIDER_FIELD_LABEL: Readonly<Record<string, string>> = {
+  uid: '飞鹅账号 user（后台登录名）',
+  clientId: '应用 client_id',
+  apiKey: '飞鹅 UKEY',
+  clientSecret: '应用 client_secret',
+}
+
+export function printProviderFieldLabel(
+  field: string,
+  secretFields: readonly { name: string; label: string }[] = [],
+): string {
+  const secret = secretFields.find((item) => item.name === field)
+  return secret?.label ?? PRINT_PROVIDER_FIELD_LABEL[field] ?? field
 }
 
 /* ------------------------------ 商户支付开通 ------------------------------ */
@@ -313,15 +344,20 @@ export const DISH_STOCK_TYPE_DICT = buildDictMap(DISH_STOCK_TYPE_OPTIONS)
 
 /* ------------------------------ 会员 ------------------------------ */
 
+/**
+ * 等级文案与后端 MEMBER_LEVEL_RULES 保持一致（按成长值升序），
+ * 档案行本身带 levelLabel，页面展示一律优先用后端下发的那个，这里只做筛选与兜底。
+ */
 export const MEMBER_LEVEL_OPTIONS: readonly DictOption<MemberLevel>[] = [
-  { value: 'normal', label: '普通会员', tag: 'info' },
+  { value: 'normal', label: '绿卡会员', tag: 'success' },
   { value: 'silver', label: '银卡会员', tag: 'primary' },
   { value: 'gold', label: '金卡会员', tag: 'warning' },
-  { value: 'vip', label: 'VIP会员', tag: 'danger' },
+  { value: 'vip', label: '钻石会员', tag: 'danger' },
 ]
 
 export const MEMBER_LEVEL_DICT = buildDictMap(MEMBER_LEVEL_OPTIONS)
 
+/** active 正常 / disabled 停用：账号级停用挡全平台，档案级停用只挡那一家店 */
 export const MEMBER_STATUS_OPTIONS: readonly DictOption<MemberStatus>[] = [
   { value: 'active', label: '正常', tag: 'success' },
   { value: 'disabled', label: '已禁用', tag: 'danger' },
@@ -336,6 +372,13 @@ export const MEMBER_GENDER_OPTIONS: readonly DictOption<MemberGender>[] = [
 ]
 
 export const MEMBER_GENDER_DICT = buildDictMap(MEMBER_GENDER_OPTIONS)
+
+/** 注册来源：后端目前只有小程序自助注册，商家导入的历史账号出现时再补 */
+export const REGISTER_SOURCE_OPTIONS: readonly DictOption<RegisterSource>[] = [
+  { value: 'mini_program', label: '小程序', tag: 'primary' },
+]
+
+export const REGISTER_SOURCE_DICT = buildDictMap(REGISTER_SOURCE_OPTIONS)
 
 /* ------------------------------ 商户员工 ------------------------------ */
 
@@ -397,4 +440,14 @@ export const MINI_PROGRAM_SOURCE_HINT: Readonly<Record<MiniProgramConfigSource, 
   database: '当前生效的凭据来自本页保存的配置。',
   env: '数据库里还没保存过 AppID，现在用的是 .env 兜底凭据；在本页保存后即以数据库为准。',
   none: '后台与 .env 都没有可用凭据，顾客无法登录小程序。',
+}
+
+/**
+ * 短信配置来源的可读说明：告诉运营「顾客现在用的到底是哪一份凭据」。
+ * source=env 时页面回显的是 .env 的兜底值，在本页保存后才以数据库为准。
+ */
+export const SMS_SOURCE_HINT: Readonly<Record<'database' | 'env' | 'none', string>> = {
+  database: '当前生效的配置来自本页保存的内容。',
+  env: '数据库里还没保存过，现在用的是 .env 兜底（SMS_DRIVER / SMS_ALIYUN_*）；在本页保存后即以数据库为准。',
+  none: '后台与 .env 都没有配置，顾客收不到短信验证码，只能用微信手机号一键登录。',
 }

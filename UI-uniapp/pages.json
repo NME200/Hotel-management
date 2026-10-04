@@ -55,6 +55,12 @@
       }
     },
     {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
       "path": "pages/store/list",
       "style": {
         "navigationBarTitleText": "选择门店"

@@ -19,15 +19,17 @@ type ClientRequest = Request & {
 };
 
 /**
- * 定店守卫：所有 /client 业务接口的前置闸门。
+ * 定店守卫：所有带门店上下文的 /client 接口的前置闸门。
  *
- * 顾客侧的租户键有两个来源——登录令牌里的 merchantId，和扫码带进来的 merchantCode。
- * 规则很简单：
- * - 已登录：一律以令牌为准，请求再带 merchantCode 时必须一致，
- *   否则说明顾客在两家店之间串了页面，让他重新进店而不是默默读到别家数据；
- * - 未登录（浏览菜单、看门店）：必须显式给 merchantCode，取自
- *   query.merchantCode → body.merchantCode → X-Merchant-Code 请求头；
- * - 商户停用、到期、没配门店，都在这里一次性挡掉，业务代码不必重复判断。
+ * 门店**只**来自请求里的 merchantCode（扫码带进来、门店列表选的、或请求头给的），
+ * 不再从登录令牌里推。这是「一个微信账号能在多家店下单」的前提：
+ * 以前令牌里钉着 merchantId，顾客一切店令牌就和门店对不上，守卫只能拒绝，
+ * 表现就是「换个店登录就掉了」。
+ *
+ * 越读别家数据的风险没有因此变大：所有查询仍然是「解析出来的 merchantId +
+ * 当前顾客的会员档案」两个条件一起走 TenantRepo，顾客拿不到别人的档案。
+ *
+ * 商户停用、到期、没配门店，都在这里一次性挡掉，业务代码不必重复判断。
  */
 @Injectable()
 export class ClientMerchantGuard implements CanActivate {
@@ -36,17 +38,6 @@ export class ClientMerchantGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<ClientRequest>();
     const code = readMerchantCode(request);
-    const user = request.user;
-
-    if (user?.userType === UserType.Client && user.merchantId !== null) {
-      const mine = await this.stores.resolveById(user.merchantId);
-      if (code && code !== mine.merchant.code) {
-        throw BusinessException.forbidden('当前门店与登录门店不一致，请重新扫码进店');
-      }
-      request[CLIENT_MERCHANT_KEY] = user.merchantId;
-      return true;
-    }
-
     if (!code) {
       throw BusinessException.badRequest('缺少门店参数，请重新扫码或从门店列表进入');
     }
@@ -78,4 +69,9 @@ function readMerchantCode(request: ClientRequest): string | null {
     }
   }
   return null;
+}
+
+/** 与守卫共用一套取值口径，供 ClientSessionGuard 判断当前门店。 */
+export function readRequestMerchantCode(request: Request): string | null {
+  return readMerchantCode(request as ClientRequest);
 }

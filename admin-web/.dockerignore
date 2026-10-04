@@ -1,0 +1,18 @@
+# 依赖与构建产物：镜像里由 pnpm install / vite build 重新生成
+node_modules
+dist
+
+# 前端不出 .env（见 DESIGN.md），这里再兜一层，防止有人本地建了被误打进镜像
+.env
+.env.*
+!.env.example
+
+# 本机数据与编辑器
+*.log
+logs
+coverage
+.DS_Store
+.idea
+.vscode
+.git
+.gitignore

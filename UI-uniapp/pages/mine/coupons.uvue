@@ -102,7 +102,7 @@
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
   import { ClaimableCoupon, Coupon } from '../../common/models.uts'
-  import { claimCoupon, fetchClaimableCoupons, fetchCoupons, login, redeemCoupon } from '../../common/api.uts'
+  import { claimCoupon, fetchClaimableCoupons, fetchCoupons, redeemCoupon } from '../../common/api.uts'
   import { isLogged } from '../../common/session.uts'
   import { dateOnly } from '../../common/format.uts'
   import { toast } from '../../common/request.uts'
@@ -277,18 +277,9 @@
     uni.switchTab({ url: '/pages/menu/menu' })
   }
 
+  /** 登录在登录页完成（验证码 / 微信一键两种方式），这里只负责跳过去。 */
   function tapLogin() : void {
-    doLogin()
-  }
-
-  async function doLogin() : Promise<void> {
-    const result = await login('', '')
-    if (result.code != 0) {
-      toast(result.message)
-      return
-    }
-    await load()
-    toast('登录成功')
+    uni.navigateTo({ url: '/pages/login/login' })
   }
 
   onShow(() => {

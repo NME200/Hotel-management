@@ -38,7 +38,7 @@ export function fetchMerchantOrders(
   return http.get<PageResult<PlatformOrder>>(`/platform/merchants/${merchantId}/orders`, { ...params })
 }
 
-/** GET /platform/merchants/{id}/members */
+/** GET /platform/merchants/{id}/members 这一家店的会员档案（只读，管理动作在平台会员页） */
 export function fetchMerchantMembers(
   merchantId: number,
   params: PlatformMemberListParams,

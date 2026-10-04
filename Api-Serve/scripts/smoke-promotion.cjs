@@ -8,7 +8,9 @@
  * 4. 运营位卡关联的活动一旦删除或过期，卡片不能变成死链。
  *
  * 用法：node scripts/smoke-promotion.cjs
- * 前置：后端已启动、已 db:seed、已迁移；顾客令牌取自 .e2e/token.txt（先跑 .e2e/mint.cjs 取新的）。
+ * 前置：后端已启动、已 db:seed、已迁移；顾客令牌取自 .e2e/token.txt
+ *      （跑 .e2e/mint-client.cjs 本地签发，或 .e2e/mint.cjs 走真实微信登录）。
+ * 令牌不再绑门店，所以顾客端请求必须自己带 X-Merchant-Code——和小程序 request.uts 的行为一致。
  * 脚本自带清理，可反复执行。
  */
 const fs = require('node:fs');
@@ -19,6 +21,7 @@ const HOST = process.env.SMOKE_HOST || '127.0.0.1';
 const PORT = Number(process.env.SMOKE_PORT || 8000);
 const BASE = '/api/v1';
 const TOKEN_FILE = path.join(__dirname, '..', '..', '.e2e', 'token.txt');
+const CLIENT_STORE = process.env.SMOKE_STORE_CODE || 'M10001';
 
 let pass = 0;
 let fail = 0;
@@ -47,6 +50,7 @@ function req(method, p, body, token) {
         headers: Object.assign(
           { 'Content-Type': 'application/json' },
           token ? { Authorization: 'Bearer ' + token } : {},
+          p.startsWith('/client/') ? { 'X-Merchant-Code': CLIENT_STORE } : {},
           data ? { 'Content-Length': Buffer.byteLength(data) } : {},
         ),
       },

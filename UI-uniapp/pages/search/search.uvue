@@ -42,7 +42,7 @@
       <view v-else class="grid">
         <view v-for="dish in dishes" :key="dish.id" class="card" @click="openDish(dish.id)">
           <view class="thumb-box">
-            <image v-if="dish.image != null" class="thumb" :src="dish.image!" mode="aspectFill"></image>
+            <image v-if="imageUrl(dish.image) != ''" class="thumb" :src="imageUrl(dish.image)" mode="aspectFill"></image>
             <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(dish.name) }}</text></view>
             <view v-if="dish.soldOut" class="thumb-mask">
               <text class="thumb-mask-text">已售罄</text>
@@ -76,7 +76,7 @@
   import { fetchMenu, searchDishes } from '../../common/api.uts'
   import { DishBrief, MenuCategory } from '../../common/models.uts'
   import { CartLine, add, lineKey } from '../../common/cart.uts'
-  import { amountText, salesText } from '../../common/format.uts'
+  import { amountText, imageUrl, salesText } from '../../common/format.uts'
   import {
     estimateUnitPrice,
     memberTipText,

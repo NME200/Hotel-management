@@ -13,6 +13,10 @@ const KEY_ACCESS_TOKEN = "dc_access_token";
 const KEY_REFRESH_TOKEN = "dc_refresh_token";
 const KEY_MERCHANT_CODE = "dc_merchant_code";
 const KEY_NICKNAME = "dc_nickname";
+// 桌位上下文：只有扫了那张桌的二维码才成立，换店或从门店列表进店要清掉。
+// token 是下单时后端用来反查桌号的凭据，桌号只是给顾客看的。
+const KEY_TABLE_NO = "dc_table_no";
+const KEY_TABLE_TOKEN = "dc_table_token";
 
 function readText(key: string): string {
   const value = uni.getStorageSync(key);
@@ -53,6 +57,38 @@ export function saveTokens(access: string, refresh: string): void {
 
 export function saveMerchantCode(code: string): void {
   writeText(KEY_MERCHANT_CODE, code);
+}
+
+/* ------------------------------ 桌位 ------------------------------ */
+
+/** 顾客当前所在桌号（展示用），没扫桌位码时为空串。 */
+export function tableNo(): string {
+  return readText(KEY_TABLE_NO);
+}
+
+/** 桌位凭据：下单时回传后端换桌号，前端不解析、不拼接。 */
+export function tableToken(): string {
+  return readText(KEY_TABLE_TOKEN);
+}
+
+/** 是否处在「扫过桌位码」的状态；堂食下单必须为 true。 */
+export function hasTable(): boolean {
+  return tableToken().length > 0;
+}
+
+export function saveTable(no: string, token: string): void {
+  writeText(KEY_TABLE_NO, no);
+  writeText(KEY_TABLE_TOKEN, token);
+}
+
+/**
+ * 清掉桌位上下文。三种情况必须调用：
+ * 扫码解析失败（码被重制/桌位停用）、换了一家店、从门店列表手动选店。
+ * 桌号只在「扫过这张桌的码」之后才成立，带错桌号比没有桌号更糟。
+ */
+export function clearTable(): void {
+  writeText(KEY_TABLE_NO, "");
+  writeText(KEY_TABLE_TOKEN, "");
 }
 
 export function saveNickname(value: string): void {

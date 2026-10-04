@@ -1,6 +1,7 @@
 import { Activity } from './activity.entity';
 import { Category } from './category.entity';
 import { CouponTemplate } from './coupon-template.entity';
+import { Customer } from './customer.entity';
 import { Dish } from './dish.entity';
 import { DishOptionGroup } from './dish-option-group.entity';
 import { DishSku } from './dish-sku.entity';
@@ -20,12 +21,18 @@ import { PaymentReconcileDetail } from './payment-reconcile-detail.entity';
 import { PaymentRefund } from './payment-refund.entity';
 import { PlatformAudit } from './platform-audit.entity';
 import { PlatformUser } from './platform-user.entity';
+import { Printer } from './printer.entity';
+import { PrintProviderConfig } from './print-provider-config.entity';
+import { PrintTask } from './print-task.entity';
 import { ProfitShare } from './profit-share.entity';
 import { Promotion } from './promotion.entity';
 import { Store } from './store.entity';
+import { SmsConfig } from './sms-config.entity';
+import { StoreTable } from './store-table.entity';
 
 export {
   Activity,
+  Customer,
   Category,
   CouponTemplate,
   Dish,
@@ -47,9 +54,14 @@ export {
   PaymentRefund,
   PlatformAudit,
   PlatformUser,
+  Printer,
+  PrintProviderConfig,
+  PrintTask,
   ProfitShare,
   Promotion,
+  SmsConfig,
   Store,
+  StoreTable,
 };
 export { BaseEntity, TenantBaseEntity } from './base.entity';
 export { DishOptionItem } from './dish-option-group.entity';
@@ -80,4 +92,11 @@ export const entities = [
   PaymentReconcile,
   PaymentReconcileDetail,
   Promotion,
+  Customer,
+  Printer,
+  PrintProviderConfig,
+  PrintTask,
+  StoreTable,
+
+  SmsConfig,
 ];

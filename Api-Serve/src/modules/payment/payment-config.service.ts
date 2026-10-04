@@ -22,7 +22,7 @@ import { Merchant } from '../../database/entities/merchant.entity';
 import { MerchantPaymentConfig } from '../../database/entities/merchant-payment-config.entity';
 import { PaymentChannelConfig } from '../../database/entities/payment-channel-config.entity';
 import { RedisService } from '../redis/redis.service';
-import { PaymentChannel } from './constants/payment.constant';
+import { PaymentChannel, isOfflineChannel, ONLINE_CHANNELS } from './constants/payment.constant';
 import type {
   MerchantApplyDto,
   MerchantAuditDto,
@@ -91,7 +91,8 @@ export class PaymentConfigService {
     const byChannel = new Map(rows.map((row) => [row.channel, row] as const));
 
     const items: PaymentChannelItem[] = [];
-    for (const channel of Object.values(PaymentChannel)) {
+    // 只列在线渠道：现金与收款码不需要平台配开关或密钥，出现在这里只会让人以为要去配它
+    for (const channel of ONLINE_CHANNELS) {
       const row = byChannel.get(channel) ?? null;
       const effective = await this.getEffective(channel);
       items.push({
@@ -117,6 +118,8 @@ export class PaymentConfigService {
     dto: UpdateChannelConfigDto,
     operator: { id: number; name: string },
   ): Promise<PaymentChannelItem> {
+    this.assertOnlineChannel(channel, '配置');
+
     const row =
       (await this.channels.findOne({ where: { channel } })) ??
       this.channels.create({ channel, enabled: false });
@@ -179,6 +182,15 @@ export class PaymentConfigService {
   async testChannel(channel: PaymentChannel): Promise<{ ok: boolean; message: string; checkedAt: Date }> {
     const checkedAt = new Date();
 
+    // 线下渠道没有可连通的东西要测，恒可用
+    if (isOfflineChannel(channel)) {
+      return {
+        ok: true,
+        message: '线下收款渠道，无需配置，始终可用',
+        checkedAt,
+      };
+    }
+
     if (channel === PaymentChannel.Mock) {
       const enabled = this.configService.get('app', { infer: true }).payment.mock.enabled;
       return {
@@ -211,13 +223,13 @@ export class PaymentConfigService {
 
   /* ======================= 商户级 ======================= */
 
-  /** 商家端：固定返回三条渠道，未申请的合成 not_applied。 */
+  /** 商家端：固定返回三条在线渠道，未申请的合成 not_applied；线下渠道不走进件，不在此列。 */
   async listForMerchant(merchantId: number): Promise<MerchantPaymentConfigItem[]> {
     const rows = await this.merchantConfigs.find({ where: { merchantId } });
     const byChannel = new Map(rows.map((row) => [row.channel, row] as const));
 
     const items: MerchantPaymentConfigItem[] = [];
-    for (const channel of Object.values(PaymentChannel)) {
+    for (const channel of ONLINE_CHANNELS) {
       const effective = await this.getEffective(channel);
       items.push(
         this.buildMerchantItem(
@@ -236,6 +248,8 @@ export class PaymentConfigService {
     dto: MerchantApplyDto,
     operator: { id: number; name: string },
   ): Promise<MerchantPaymentConfigItem> {
+    this.assertOnlineChannel(dto.channel, '进件');
+
     const effective = await this.getEffective(dto.channel);
     if (!effective.enabled || !effective.ready) {
       throw BusinessException.badRequest(`${CHANNEL_LABELS[dto.channel]}尚未开放，请联系平台运营`);
@@ -392,6 +406,17 @@ export class PaymentConfigService {
     merchantId: number,
     channel: PaymentChannel,
   ): Promise<PayableContext> {
+    // 线下收款不经过渠道：没有平台总开关、没有商户进件、没有收款账号与费率，
+    // 因此直接放行，而不是去查一张永远不会有记录的配置表。
+    if (isOfflineChannel(channel)) {
+      return {
+        effective: this.offlineEffective(channel),
+        channelAccount: null,
+        feeRate: null,
+        profitShareRate: null,
+      };
+    }
+
     const effective = await this.getEffective(channel);
     if (!effective.enabled) {
       throw BusinessException.badRequest(`${CHANNEL_LABELS[channel]}渠道未开放`);
@@ -490,7 +515,37 @@ export class PaymentConfigService {
   }
 
   private providerImplemented(channel: PaymentChannel): boolean {
-    return channel === PaymentChannel.Mock;
+    // 线下渠道的实现就在进程内（见 providers/offline.provider.ts），永远算已接入
+    return channel === PaymentChannel.Mock || isOfflineChannel(channel);
+  }
+
+  /** 线下渠道不配开关、不走密钥、不进件；任何试图配置它们的入口都要挡在这里。 */
+  private assertOnlineChannel(channel: PaymentChannel, action: string): void {
+    if (isOfflineChannel(channel)) {
+      throw BusinessException.badRequest(
+        `${CHANNEL_LABELS[channel]}是线下收款渠道，无需${action}，收银台可直接使用`,
+      );
+    }
+  }
+
+  /** 线下渠道的「生效配置」是常量：恒启用、恒就绪、无任何凭据字段。 */
+  private offlineEffective(channel: PaymentChannel): EffectiveChannelConfig {
+    return {
+      channel,
+      enabled: true,
+      notifyUrl: '',
+      appId: '',
+      mchId: '',
+      serialNo: '',
+      sandbox: false,
+      apiKey: '',
+      privateKey: '',
+      publicKeyId: '',
+      publicKey: '',
+      source: 'none',
+      missingFields: [],
+      ready: true,
+    };
   }
 
   private envDefaults(channel: PaymentChannel): ChannelDefaults {
@@ -525,6 +580,22 @@ export class PaymentConfigService {
         notifyUrl: alipay.notifyUrl,
         sandbox: alipay.sandbox,
         enabledByDefault: alipay.enabled,
+      };
+    }
+
+    // 线下渠道不读任何 .env：没有凭据可配，恒启用
+    if (isOfflineChannel(channel)) {
+      return {
+        appId: '',
+        mchId: '',
+        apiKey: '',
+        serialNo: '',
+        privateKey: '',
+        publicKeyId: '',
+        publicKey: '',
+        notifyUrl: '',
+        sandbox: false,
+        enabledByDefault: true,
       };
     }
 

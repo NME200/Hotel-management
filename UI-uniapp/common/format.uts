@@ -2,6 +2,30 @@
 // 所有金额都来自后端（单位元），这里只做「去掉无意义的尾零」这一件事，
 // 不参与任何计算——算价永远在后端。
 
+import { BACKEND_ORIGIN } from "../api/request.uts";
+
+/**
+ * 图片地址解析。
+ *
+ * 商户上传的图存在后端，库里只记 /uploads/... 这样的相对路径，这样换域名、上 CDN
+ * 都不用清洗历史数据；但微信的 <image> 只认绝对地址，所以出网前补上服务本体地址。
+ *
+ * 注意只补 /uploads/：/static/... 是小程序包内自带的图（种子菜品的占位图），
+ * 一并拼上服务地址反而会 404，整列图片全变空白。外链同样原样放行。
+ */
+const SERVER_ORIGIN: string = BACKEND_ORIGIN;
+
+export function imageUrl(path: string | null): string {
+  if (path == null) {
+    return "";
+  }
+  const value = path!;
+  if (value.startsWith("/uploads/")) {
+    return SERVER_ORIGIN + value;
+  }
+  return value;
+}
+
 /** 68 → "68"，68.5 → "68.50"，68.499 → "68.50"。 */
 export function amountText(value: number): string {
   const rounded = Math.round(value * 100) / 100;

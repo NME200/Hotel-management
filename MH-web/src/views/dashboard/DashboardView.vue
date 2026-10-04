@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
-import { Coin, Dish, Ticket, UserFilled, Refresh, Warning } from '@element-plus/icons-vue'
+import { Coin, Dish, Refresh, ShoppingBag, Tickets, Timer, TrendCharts, UserFilled } from '@element-plus/icons-vue'
 
 import { fetchDashboardOverview } from '@/api/dashboard'
 import type { DashboardOverview } from '@/api/types/dashboard'
 import { QUERY_KEYS } from '@/api/keys'
+import { TIME_PATTERN } from '@/constants/date-patterns'
 import { PERMISSION } from '@/constants/permission'
-import { formatAmount, formatCount, shortDate } from '@/utils/format'
+import { formatAmount, formatCount, formatDateTime, growthRate } from '@/utils/format'
 import { useAuthStore } from '@/stores/auth'
+import MetricCard from './components/MetricCard.vue'
+import TrendChart from './components/TrendChart.vue'
 
+const router = useRouter()
 const authStore = useAuthStore()
 
 const overviewQuery = useQuery({
@@ -19,29 +24,56 @@ const overviewQuery = useQuery({
 })
 
 const overview = computed<DashboardOverview | null>(() => overviewQuery.data.value ?? null)
+const loading = computed(() => overviewQuery.isPending.value)
 
 const trend = computed(() => overview.value?.orderTrend ?? [])
 const hotDishes = computed(() => overview.value?.hotDishes ?? [])
-
-const maxOrderCount = computed(() => trend.value.reduce((max, item) => Math.max(max, item.orderCount), 0))
-const maxTurnover = computed(() => trend.value.reduce((max, item) => Math.max(max, item.turnover), 0))
 const maxHotSales = computed(() => hotDishes.value.reduce((max, item) => Math.max(max, item.salesCount), 0))
 
-const metrics = computed(() => [
-  { key: 'order', label: '今日订单', value: formatCount(overview.value?.todayOrderCount), unit: '单', icon: Ticket, color: '#4f7cff' },
-  { key: 'turnover', label: '今日营业额', value: formatAmount(overview.value?.todayTurnover), unit: '元', icon: Coin, color: '#67c23a' },
-  { key: 'pending', label: '待处理订单', value: formatCount(overview.value?.pendingOrderCount), unit: '单', icon: Warning, color: '#e6a23c' },
-  { key: 'member', label: '会员总数', value: formatCount(overview.value?.memberCount), unit: '人', icon: UserFilled, color: '#f56c6c' },
-])
+/**
+ * 环比的「昨日」取自趋势数组倒数第二项（末项是今日）。
+ * 接口没单独给昨日值，但这两项本来就是同一份统计，不必为此加字段。
+ */
+const yesterday = computed(() =>
+  trend.value.length < 2 ? null : trend.value[trend.value.length - 2] ?? null,
+)
 
-function barHeight(value: number, max: number): string {
-  if (max <= 0) return '2%'
-  return `${Math.max((value / max) * 100, 2).toFixed(1)}%`
-}
+const orderRate = computed(() => {
+  const data = overview.value
+  if (!data || !yesterday.value) return null
+  return growthRate(data.todayOrderCount, yesterday.value.orderCount)
+})
 
+const turnoverRate = computed(() => {
+  const data = overview.value
+  if (!data || !yesterday.value) return null
+  return growthRate(data.todayTurnover, yesterday.value.turnover)
+})
+
+const trendCaption = computed(() => {
+  if (trend.value.length === 0) return ''
+  const total = trend.value.reduce((sum, item) => sum + item.orderCount, 0)
+  const peak = trend.value.reduce((max, item) => Math.max(max, item.turnover), 0)
+  return `日均 ${(total / trend.value.length).toFixed(1)} 单 · 单日营业额峰值 ¥${formatAmount(peak)}`
+})
+
+const refreshedAt = computed(() => {
+  const at = overviewQuery.dataUpdatedAt.value
+  return at ? formatDateTime(new Date(at).toISOString(), TIME_PATTERN) : '--'
+})
+
+/** 热销榜的销量占比：按累计销量排，最大那条铺满，其余按比例 */
 function salesPercent(value: number): number {
   if (maxHotSales.value <= 0) return 0
-  return Math.round((value / maxHotSales.value) * 100)
+  return Math.max(Math.round((value / maxHotSales.value) * 100), 2)
+}
+
+function goOrders(): void {
+  void router.push('/order')
+}
+
+function goDishes(): void {
+  void router.push('/dish')
 }
 </script>
 
@@ -63,135 +95,211 @@ function salesPercent(value: number): number {
       </template>
     </el-alert>
 
-    <el-row :gutter="16">
-      <el-col v-for="item in metrics" :key="item.key" :xs="12" :sm="12" :md="6">
-        <el-card class="page-card metric" shadow="never" v-loading="overviewQuery.isPending.value">
-          <div class="metric__icon" :style="{ background: `${item.color}1a`, color: item.color }">
-            <el-icon :size="20"><component :is="item.icon" /></el-icon>
-          </div>
-          <div class="metric__body">
-            <p class="metric__label">{{ item.label }}</p>
-            <p class="metric__value">
-              {{ item.value }}
-              <span class="metric__unit">{{ item.unit }}</span>
-            </p>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <div class="board-head">
+      <div class="board-head__title">
+        <h2>今日经营概览</h2>
+        <p>
+          数据截至 {{ refreshedAt }}
+          <el-button text size="small" :loading="overviewQuery.isFetching.value" @click="overviewQuery.refetch()">
+            <el-icon><Refresh /></el-icon>
+            <span>刷新</span>
+          </el-button>
+        </p>
+      </div>
+      <button
+        type="button"
+        class="todo"
+        :class="{ 'todo--danger': (overview?.pendingOrderCount ?? 0) > 0 }"
+        @click="goOrders"
+      >
+        <el-icon><Timer /></el-icon>
+        <span>待处理订单</span>
+        <b>{{ formatCount(overview?.pendingOrderCount) }}</b>
+        <span class="todo__unit">单</span>
+      </button>
+    </div>
 
-    <el-row :gutter="16">
-      <el-col :xs="24" :md="16">
-        <el-card class="page-card" shadow="never" v-loading="overviewQuery.isPending.value">
-          <template #header>
-            <div class="panel__header">
-              <span>近 7 天订单与营业额趋势</span>
-              <el-space size="small">
-                <span class="legend legend--order">订单量</span>
-                <span class="legend legend--turnover">营业额</span>
-              </el-space>
-            </div>
-          </template>
+    <div class="kpi-grid">
+      <MetricCard
+        label="今日订单"
+        :value="formatCount(overview?.todayOrderCount)"
+        unit="单"
+        :icon="Tickets"
+        tone="brand"
+        :rate="orderRate"
+        :loading="loading"
+      />
+      <MetricCard
+        label="今日营业额"
+        :value="formatAmount(overview?.todayTurnover)"
+        unit="元"
+        :icon="Coin"
+        tone="success"
+        :rate="turnoverRate"
+        :loading="loading"
+      />
+      <MetricCard
+        label="待处理订单"
+        :value="formatCount(overview?.pendingOrderCount)"
+        unit="单"
+        :icon="ShoppingBag"
+        :tone="(overview?.pendingOrderCount ?? 0) > 0 ? 'danger' : 'neutral'"
+        hint="已下单待接单，去订单页处理"
+        :loading="loading"
+        clickable
+        @click="goOrders"
+      />
+      <MetricCard
+        label="会员总数"
+        :value="formatCount(overview?.memberCount)"
+        unit="人"
+        :icon="UserFilled"
+        tone="warning"
+        :hint="`在售菜品 ${formatCount(overview?.dishCount)} 个`"
+        :loading="loading"
+      />
+    </div>
 
-          <div v-if="trend.length > 0" class="trend">
-            <div v-for="point in trend" :key="point.date" class="trend__col">
-              <div class="trend__bars">
-                <el-tooltip :content="`${shortDate(point.date)} · ${point.orderCount} 单`" placement="top">
-                  <span class="trend__bar trend__bar--order" :style="{ height: barHeight(point.orderCount, maxOrderCount) }" />
-                </el-tooltip>
-                <el-tooltip :content="`${shortDate(point.date)} · ¥${formatAmount(point.turnover)}`" placement="top">
-                  <span class="trend__bar trend__bar--turnover" :style="{ height: barHeight(point.turnover, maxTurnover) }" />
-                </el-tooltip>
+    <div class="panel-grid">
+      <el-card class="page-card panel" shadow="never" v-loading="loading">
+        <template #header>
+          <div class="panel__header">
+            <span class="panel__title">
+              <el-icon class="panel__title-icon"><TrendCharts /></el-icon>
+              近 7 天订单与营业额
+            </span>
+            <span class="panel__caption">{{ trendCaption }}</span>
+          </div>
+        </template>
+        <TrendChart :points="trend" />
+      </el-card>
+
+      <el-card class="page-card panel" shadow="never" v-loading="loading">
+        <template #header>
+          <div class="panel__header">
+            <span class="panel__title">
+              <el-icon class="panel__title-icon"><Dish /></el-icon>
+              热销菜品
+            </span>
+            <el-button text type="primary" size="small" @click="goDishes">
+              <span>菜品管理</span>
+            </el-button>
+          </div>
+        </template>
+
+        <ul v-if="hotDishes.length > 0" class="rows">
+          <li v-for="(dish, index) in hotDishes" :key="dish.id" class="rows__rank">
+            <span class="rows__rank-no" :class="{ 'rows__rank-no--top': index < 3 }">{{ index + 1 }}</span>
+            <div class="rows__main">
+              <div class="rows__line">
+                <span class="text-ellipsis">{{ dish.name }}</span>
+                <span class="rows__amount">{{ formatCount(dish.salesCount) }} 份</span>
               </div>
-              <span class="trend__label">{{ shortDate(point.date) }}</span>
-            </div>
-          </div>
-          <el-empty v-else description="暂无趋势数据" :image-size="72" />
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :md="8">
-        <el-card class="page-card" shadow="never" v-loading="overviewQuery.isPending.value">
-          <template #header>
-            <div class="panel__header">
-              <span>热销菜品榜</span>
-              <span class="text-muted">共 {{ formatCount(overview?.dishCount) }} 个菜品</span>
-            </div>
-          </template>
-
-          <ul v-if="hotDishes.length > 0" class="hot-dishes">
-            <li v-for="(dish, index) in hotDishes" :key="dish.id" class="hot-dishes__item">
-              <span class="hot-dishes__rank" :class="{ 'hot-dishes__rank--top': index < 3 }">{{ index + 1 }}</span>
-              <div class="hot-dishes__main">
-                <div class="hot-dishes__row">
-                  <span class="text-ellipsis">{{ dish.name }}</span>
-                  <span class="hot-dishes__sales">
-                    <el-icon><Dish /></el-icon>
-                    {{ formatCount(dish.salesCount) }}
-                  </span>
-                </div>
-                <el-progress
-                  :percentage="salesPercent(dish.salesCount)"
-                  :show-text="false"
-                  :stroke-width="6"
-                  color="#4f7cff"
-                />
+              <div class="rows__track">
+                <span class="rows__fill" :style="{ width: `${salesPercent(dish.salesCount)}%` }" />
               </div>
-            </li>
-          </ul>
-          <el-empty v-else description="暂无热销数据" :image-size="72" />
-        </el-card>
-      </el-col>
-    </el-row>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="panel__empty">
+          <el-icon class="panel__empty-icon"><Dish /></el-icon>
+          <span>还没有菜品卖出过</span>
+        </div>
+
+        <p class="panel__foot-tip">按菜品累计销量排序，不是近 7 天销量</p>
+      </el-card>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.metric {
+.board-head {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
 }
 
-.metric :deep(.el-card__body) {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-}
-
-.metric__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-}
-
-.metric__body {
-  min-width: 0;
-}
-
-.metric__label {
-  margin: 0 0 4px;
-  font-size: 13px;
-  color: #909399;
-}
-
-.metric__value {
+.board-head__title h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 1.2;
+  color: #1f2937;
 }
 
-.metric__unit {
-  margin-left: 4px;
+.board-head__title p {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 0;
   font-size: 12px;
-  font-weight: 400;
   color: #909399;
+}
+
+.todo {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 14px;
+  font-size: 13px;
+  color: #4b5563;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #eef1f6;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+
+.todo b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: #1f2937;
+}
+
+.todo__unit {
+  font-size: 12px;
+  color: #909399;
+}
+
+.todo:hover {
+  border-color: #c9d5ff;
+  box-shadow: 0 4px 14px rgb(15 23 42 / 6%);
+}
+
+.todo--danger {
+  color: #d9534f;
+  background: rgba(245, 108, 108, 0.06);
+  border-color: rgba(245, 108, 108, 0.3);
+}
+
+.todo--danger b {
+  color: #f56c6c;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.panel {
+  height: 100%;
+}
+
+.panel :deep(.el-card__header) {
+  padding: 14px 18px;
+  border-bottom: 1px solid #f2f4f8;
+}
+
+.panel :deep(.el-card__body) {
+  padding: 16px 18px 18px;
 }
 
 .panel__header {
@@ -199,99 +307,65 @@ function salesPercent(value: number): number {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.panel__title {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
   font-size: 15px;
   font-weight: 600;
+  color: #1f2937;
 }
 
-.legend {
-  padding-left: 12px;
-  font-size: 12px;
-  font-weight: 400;
-  color: #606266;
+.panel__title-icon {
+  color: #4f7cff;
 }
 
-.legend::before {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  margin-left: -12px;
-  border-radius: 2px;
-  content: '';
-}
-
-.legend--order::before {
-  background: #4f7cff;
-}
-
-.legend--turnover::before {
-  background: #67c23a;
-}
-
-.trend {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  height: 240px;
-  padding-top: 8px;
-}
-
-.trend__col {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
-  gap: 8px;
-}
-
-.trend__bars {
-  display: flex;
-  flex: 1;
-  gap: 6px;
-  align-items: flex-end;
-  justify-content: center;
-  width: 100%;
-}
-
-.trend__bar {
-  width: 16px;
-  border-radius: 4px 4px 0 0;
-  transition: height 0.3s ease;
-}
-
-.trend__bar--order {
-  background: #4f7cff;
-}
-
-.trend__bar--turnover {
-  background: #67c23a;
-  opacity: 0.75;
-}
-
-.trend__label {
+.panel__caption {
   font-size: 12px;
   color: #909399;
 }
 
-.hot-dishes {
+.panel__foot-tip {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.panel__empty {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 132px;
+  font-size: 13px;
+  color: #909399;
+}
+
+.panel__empty-icon {
+  color: #2fa66a;
+}
+
+.rows {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.hot-dishes__item {
+.rows__rank {
   display: flex;
   gap: 10px;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px dashed #eef1f6;
+  padding: 10px 0;
+  border-bottom: 1px dashed #f2f4f8;
 }
 
-.hot-dishes__item:last-child {
+.rows__rank:last-child {
   border-bottom: none;
 }
 
-.hot-dishes__rank {
+.rows__rank-no {
   display: flex;
   flex-shrink: 0;
   align-items: center;
@@ -299,34 +373,65 @@ function salesPercent(value: number): number {
   width: 22px;
   height: 22px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: #606266;
   background: #f0f2f5;
-  border-radius: 50%;
+  border-radius: 6px;
 }
 
-.hot-dishes__rank--top {
+.rows__rank-no--top {
   color: #fff;
-  background: #e6a23c;
+  background: linear-gradient(135deg, #ffb64d, #f5842c);
 }
 
-.hot-dishes__main {
-  min-width: 0;
+.rows__main {
   flex: 1;
+  min-width: 0;
 }
 
-.hot-dishes__row {
+.rows__line {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  font-size: 14px;
 }
 
-.hot-dishes__sales {
-  display: flex;
+.rows__amount {
   flex-shrink: 0;
-  gap: 2px;
-  align-items: center;
-  font-size: 12px;
-  color: #909399;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #4f7cff;
+}
+
+.rows__track {
+  height: 5px;
+  overflow: hidden;
+  background: #eef1f6;
+  border-radius: 999px;
+}
+
+.rows__fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #7f9dff, #4f7cff);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+@media (max-width: 1200px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

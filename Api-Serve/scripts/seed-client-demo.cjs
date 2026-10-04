@@ -21,8 +21,6 @@ const LEVEL_RULES = [
   { level: 'vip', threshold: 12000 },
 ];
 
-/** 假 openid 的前缀：唯一索引是 (merchant_id, openid)，一眼要和真实微信用户分清楚。 */
-const OPENID_PREFIX = 'oSEEDdemo';
 
 const pad = (value, length) => String(value).padStart(length, '0');
 
@@ -484,12 +482,20 @@ async function insertCoupon(db, row) {
 }
 
 /**
- * 会员成长值与 openid：只碰 openid IS NULL 的行——
- * 已经真实登录过的会员由微信侧建档，演示数据不去覆盖他的等级。
+ * 会员成长值：只碰还没绑 openid 的账号——
+ * 已经真实登录过的顾客由微信侧建档，演示数据不去覆盖他的等级。
+ *
+ * **这里刻意不再给演示会员塞假 openid**（以前会塞一个 oSEEDdemo…）。
+ * 那些会员代表的是「商家导入的、还没有微信身份的历史顾客」，
+ * 一旦预绑了 openid，顾客用手机号验证码或一键授权登录时就会撞上
+ * 「该手机号已绑定其它微信号」，正好把最该演示的「认领历史档案」这条路堵死；
+ * 而且假 openid 永远换不回来，等于一条谁也登不上的死身份。
  */
 async function seedMemberGrowth(db, merchantId, growthPlan, stats) {
   const [rows] = await db.execute(
-    'SELECT id, nickname, openid, growth_value, level FROM member WHERE merchant_id = ? ORDER BY id ASC',
+    'SELECT m.id, m.customer_id, m.growth_value, m.level, c.nickname, c.openid'
+      + ' FROM member m JOIN customer c ON c.id = m.customer_id'
+      + ' WHERE m.merchant_id = ? ORDER BY m.id ASC',
     [merchantId],
   );
   for (let index = 0; index < growthPlan.length; index += 1) {
@@ -502,18 +508,18 @@ async function seedMemberGrowth(db, merchantId, growthPlan, stats) {
     }
     if (member.openid) {
       stats.memberSkipped += 1;
-      console.log(`  [会员] 已有 openid，跳过：${member.nickname}（成长值 ${member.growth_value}）`);
+      console.log(`  [会员] 已有微信身份，跳过：${member.nickname}（成长值 ${member.growth_value}）`);
       continue;
     }
     const level = levelByGrowth(growthValue);
-    const openid = `${OPENID_PREFIX}${pad(index + 1, 21)}`;
-    const [result] = await db.execute(
-      'UPDATE member SET growth_value = ?, level = ?, openid = ? WHERE id = ? AND merchant_id = ? AND openid IS NULL',
-      [growthValue, level, openid, member.id, merchantId],
-    );
+    const [result] = await db.execute('UPDATE member SET growth_value = ?, level = ? WHERE id = ?', [
+      growthValue,
+      level,
+      member.id,
+    ]);
     if (result.affectedRows) {
       stats.memberUpdated += 1;
-      console.log(`  [会员] 更新 ${member.nickname}：成长值 ${growthValue} → ${level}｜openid ${openid}`);
+      console.log(`  [会员] 更新 ${member.nickname}：成长值 ${growthValue} → ${level}`);
     } else {
       stats.memberSkipped += 1;
     }
@@ -563,7 +569,8 @@ async function ensureStoreOpen(db, merchantId, stats) {
       const byKey = await seedTemplates(db, merchantId, plan.templates, plan.coupons, stats);
 
       const [members] = await db.execute(
-        'SELECT id, nickname FROM member WHERE merchant_id = ? ORDER BY id ASC',
+        'SELECT m.id, c.nickname FROM member m JOIN customer c ON c.id = m.customer_id'
+          + ' WHERE m.merchant_id = ? ORDER BY m.id ASC',
         [merchantId],
       );
       if (!members.length) {

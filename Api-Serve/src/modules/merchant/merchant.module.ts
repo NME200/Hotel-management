@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Category } from '../../database/entities/category.entity';import { Dish } from '../../database/entities/dish.entity';
+import { Category } from '../../database/entities/category.entity';
+import { Dish } from '../../database/entities/dish.entity';
 import { DishOptionGroup } from '../../database/entities/dish-option-group.entity';
 import { DishSku } from '../../database/entities/dish-sku.entity';
 import { Member } from '../../database/entities/member.entity';
@@ -15,16 +16,18 @@ import { ActivityController } from './activity/activity.controller';
 import { ActivityService } from './activity/activity.service';
 import { PromotionController } from './promotion/promotion.controller';
 import { PromotionService } from './promotion/promotion.service';
+import { UploadModule } from './upload/upload.module';
 import { CategoryController } from './category/category.controller';
 import { CategoryService } from './category/category.service';
 import { DashboardController } from './dashboard/dashboard.controller';
 import { DashboardService } from './dashboard/dashboard.service';
 import { DishController } from './dish/dish.controller';
 import { DishService } from './dish/dish.service';
-import { MemberController } from './member/member.controller';
-import { MemberService } from './member/member.service';
 import { OrderController } from './order/order.controller';
 import { OrderService } from './order/order.service';
+import { PrintModule } from './print/print.module';
+import { TableModule } from './table/table.module';
+import { CashierModule } from './cashier/cashier.module';
 import { StaffController } from './staff/staff.controller';
 import { StaffService } from './staff/staff.service';
 import { StoreController } from './store/store.controller';
@@ -33,6 +36,10 @@ import { StoreService } from './store/store.service';
 @Module({
   imports: [
     MemberGrowthModule,
+    PrintModule,
+    TableModule,
+    CashierModule,
+    UploadModule,
     TypeOrmModule.forFeature([
       Store,
       Category,
@@ -54,22 +61,19 @@ import { StoreService } from './store/store.service';
     PromotionController,
     DishController,
     OrderController,
-    MemberController,
     StaffController,
     DashboardController,
-  ],
-  providers: [
+  ],  providers: [
     StoreService,
     CategoryService,
     ActivityService,
     PromotionService,
     DishService,
     OrderService,
-    MemberService,
     StaffService,
     DashboardService,
   ],
   // 平台端只读穿透接口复用同一批 service，保证两端字段结构一致
-  exports: [DishService, OrderService, MemberService, StaffService],
+  exports: [DishService, OrderService, StaffService],
 })
 export class MerchantModule {}

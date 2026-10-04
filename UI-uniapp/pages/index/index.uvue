@@ -10,10 +10,11 @@
     </view>
 
     <scroll-view v-else class="scroll" direction="vertical" :show-scrollbar="false">
-      <!-- 定位行 -->
+      <!-- 定位行：扫桌位码进来时额外显示桌号，顾客能立刻确认自己扫的是哪一桌 -->
       <view class="loc-row">
         <text class="loc-pin">◎</text>
         <text class="loc-name">{{ storeName }}</text>
+        <text v-if="currentTable.length > 0" class="loc-table">{{ '桌号 ' + currentTable }}</text>
         <text class="loc-change" @click="goStores">切换</text>
       </view>
 
@@ -60,7 +61,7 @@
         <view class="grid">
           <view v-for="dish in dishes" :key="dish.id" class="card" @click="openDish(dish.id)">
             <view class="thumb-box">
-              <image v-if="dish.image != null" class="thumb" :src="dish.image!" mode="aspectFill"></image>
+              <image v-if="imageUrl(dish.image) != ''" class="thumb" :src="imageUrl(dish.image)" mode="aspectFill"></image>
               <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(dish.name) }}</text></view>
               <view v-if="dish.soldOut" class="thumb-mask">
                 <text class="thumb-mask-text">已售罄</text>
@@ -93,8 +94,8 @@
 
 <script setup lang="uts">
   import { onLoad, onShow } from '@dcloudio/uni-app'
-  import { merchantCode } from '../../common/session.uts'
-  import { resolveEntryCode } from '../../common/entry.uts'
+  import { merchantCode, tableNo } from '../../common/session.uts'
+  import { entryReady, resolveEntry } from '../../common/entry.uts'
   import {
     fetchActivities,
     fetchMenu,
@@ -112,6 +113,7 @@
     promoTagText,
     salePriceText,
   } from '../../common/price.uts'
+  import { imageUrl } from '../../common/format.uts'
 
   const store = ref<StoreContext | null>(null)
   const categories = ref<MenuCategory[]>([] as MenuCategory[])
@@ -122,6 +124,11 @@
   const loadError = ref("")
 
   const storeName = computed(() : string => store.value == null ? '' : store.value!.name)
+  /**
+   * 扫过桌位码才有桌号；有值时定位行右侧显示「桌号 A01」，让顾客确认没坐错桌。
+   * 用 ref 而不是 computed：桌号存在本地存储里，不是响应式数据，每次 load 时重读一次。
+   */
+  const currentTable = ref("")
   /** 首页导航最多展示 8 个分类（两排 × 4），超出的从菜单页看。 */
   const navCategories = computed(() : MenuCategory[] => categories.value.slice(0, 8))
   function firstChar(name: string) : string {
@@ -133,6 +140,9 @@
   }
 
   async function load() : Promise<void> {
+    // 等 onLoad 的扫码解析落地：扫桌位码时它要问一次后端换桌号，不等就会先渲染出「没有桌号」
+    await entryReady()
+    currentTable.value = tableNo()
     const code = merchantCode()
     if (code.length == 0) {
       loadError.value = ''
@@ -212,7 +222,7 @@
   }
 
   onLoad((options: OnLoadOptions) => {
-    resolveEntryCode(options)
+    resolveEntry(options)
   })
 
   onShow(() => {
@@ -252,6 +262,19 @@
     color: $text-1;
     lines: 1;
     text-overflow: ellipsis;
+  }
+
+  /* 桌号胶囊：主色浅底，与「切换」区分开，一眼能看到自己坐在哪一桌 */
+  .loc-table {
+    height: 40rpx;
+    line-height: 40rpx;
+    padding-left: $space-2;
+    padding-right: $space-2;
+    margin-right: $space-1;
+    border-radius: $radius-tag;
+    background-color: $brand-light;
+    font-size: $font-small;
+    color: $brand;
   }
 
   .loc-change {

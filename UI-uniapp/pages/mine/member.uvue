@@ -24,6 +24,18 @@
           <text class="mcard-scale-text">{{ scaleLeft() }}</text>
           <text class="mcard-scale-text">{{ scaleRight() }}</text>
         </view>
+
+        <!--
+          手机号：一键登录时通常已经带上；早先进来的顾客点这行跳登录页去绑。
+          已绑定只显示脱敏号不给改 —— 手机号是顾客与门店之间的锚点，换号要走门店人工。
+        -->
+        <view class="mcard-phone">
+          <text class="mcard-phone-label">手机号</text>
+          <text v-if="hasPhone()" class="mcard-phone-value">{{ phoneText() }}</text>
+          <view v-else class="mcard-phone-bind" @click="goBindPhone">
+            <text class="mcard-phone-bind-text">绑定手机号</text>
+          </view>
+        </view>
       </view>
 
       <!-- 我的权益：两行 × 四列图标宫格 -->
@@ -92,10 +104,9 @@
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
   import { ActivityCard, Benefit, MemberBrief, MemberDay, NextLevel, TaskItem } from '../../common/models.uts'
-  import { fetchActivities, fetchMemberCenter, login } from '../../common/api.uts'
+  import { fetchActivities, fetchMemberCenter } from '../../common/api.uts'
   import { isLogged, merchantCode } from '../../common/session.uts'
   import { cardGo, cardSub, iconChar, openCard } from '../../common/activity.uts'
-  import { toast } from '../../common/request.uts'
 
   const logged = ref(false)
   const member = ref<MemberBrief | null>(null)
@@ -227,19 +238,26 @@
     openCard(item)
   }
 
-  /** 登录只走后端真实微信 code，失败原样 toast 后端文案。 */
+  /** 登录与绑号都在登录页完成，这里只负责跳过去。 */
   function tapLogin() : void {
-    doLogin()
+    uni.navigateTo({ url: '/pages/login/login' })
   }
 
-  async function doLogin() : Promise<void> {
-    const result = await login('', '')
-    if (result.code != 0) {
-      toast(result.message)
-      return
+  function goBindPhone() : void {
+    uni.navigateTo({ url: '/pages/login/login?mode=bind' })
+  }
+
+  function hasPhone() : boolean {
+    const m = member.value
+    return m != null && m!.phoneMasked != null
+  }
+
+  function phoneText() : string {
+    const m = member.value
+    if (m == null || m!.phoneMasked == null) {
+      return ''
     }
-    await load()
-    toast('登录成功')
+    return m!.phoneMasked!
   }
 
   onShow(() => {
@@ -297,6 +315,40 @@
     color: rgba(255, 255, 255, 0.9);
     lines: 1;
     text-overflow: ellipsis;
+  }
+
+  /* 会员卡底部的手机号行：白字 + 半透明胶囊按钮，不破坏渐变 */
+  .mcard-phone {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: $space-3;
+  }
+
+  .mcard-phone-label {
+    font-size: $font-caption;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .mcard-phone-value {
+    font-size: $font-body;
+    font-weight: $semibold;
+    color: #FFFFFF;
+  }
+
+  .mcard-phone-bind {
+    padding-top: $space-1;
+    padding-bottom: $space-1;
+    padding-left: $space-3;
+    padding-right: $space-3;
+    background-color: rgba(255, 255, 255, 0.24);
+    border-radius: $radius-btn-sm;
+  }
+
+  .mcard-phone-bind-text {
+    font-size: $font-caption;
+    font-weight: $semibold;
+    color: #FFFFFF;
   }
 
   .mcard-track {

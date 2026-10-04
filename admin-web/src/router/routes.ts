@@ -34,6 +34,12 @@ export const routes: RouteRecordRaw[] = [
         meta: { title: '到期预警', permissions: [PERMISSION.merchantRead] },
       },
       {
+        path: 'member',
+        name: 'member',
+        component: () => import('@/views/member/MemberView.vue'),
+        meta: { title: '会员管理', permissions: [PERMISSION.platformMemberRead] },
+      },
+      {
         path: 'payment/channel',
         name: 'payment-channel',
         component: () => import('@/views/payment/PaymentChannelView.vue'),
@@ -68,6 +74,20 @@ export const routes: RouteRecordRaw[] = [
         name: 'mini-program-config',
         component: () => import('@/views/system/MiniProgramConfigView.vue'),
         meta: { title: '小程序配置', permissions: [PERMISSION.miniProgramManage] },
+      },
+      {
+        path: 'system/sms',
+        name: 'sms-config',
+        component: () => import('@/views/system/SmsConfigView.vue'),
+        // 运营只有只读权限，也能进来查看短信配没配好
+        meta: { title: '短信配置', permissions: [PERMISSION.smsRead] },
+      },
+      {
+        path: 'system/print-provider',
+        name: 'print-provider-config',
+        component: () => import('@/views/system/PrintProviderConfigView.vue'),
+        // 运营只有只读权限，也能进来查看厂商配没配好
+        meta: { title: '云打印机配置', permissions: [PERMISSION.printRead] },
       },
       {
         path: 'account',

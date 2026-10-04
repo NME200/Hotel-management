@@ -1,0 +1,70 @@
+# 平台端静态站点 + 反向代理。
+#
+# 启动时由 nginx 官方镜像的 entrypoint 做变量替换（只替换真实存在的环境变量，
+# 因此 nginx 自身的 $host / $uri 不会被误伤），可用变量：
+#   API_UPSTREAM     后端 API 地址，例如 http://api:8000
+#   UPLOADS_UPSTREAM 商户上传图片的地址；用对象存储/CDN 时指向 CDN
+#
+# 前端产物里不含任何后端地址（接口只用相对路径 /api/v1），
+# 换环境只改这两个变量，不用重新构建镜像。
+
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # 商户上传的图片最大 5MB（见后端 UPLOAD_MAX_MB），nginx 默认只放行 1MB，
+  # 不放开的话上传会被网关直接挡掉、连后端都到不了。
+  client_max_body_size 10m;
+
+  gzip on;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+  # 容器探针用，不写访问日志
+  location = /healthz {
+    access_log off;
+    return 200 "ok\n";
+  }
+
+  # 带内容哈希的构建产物可以长期缓存
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    try_files $uri =404;
+  }
+
+  # 接口：保留完整路径转发给后端（proxy_pass 不带路径时原样透传）
+  location /api/ {
+    proxy_pass ${API_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # 支付回调、对账等接口可能较慢，给足超时
+    proxy_read_timeout 60s;
+  }
+
+  location /uploads/ {
+    proxy_pass ${UPLOADS_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # 入口页不缓存：否则发版后浏览器仍拿旧 index.html，引用的还是已被删掉的旧资源
+  location = /index.html {
+    add_header Cache-Control "no-store";
+  }
+
+  # 单页应用：其余路径一律回落到 index.html，由前端路由接管
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

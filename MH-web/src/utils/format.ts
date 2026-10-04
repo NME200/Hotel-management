@@ -35,6 +35,22 @@ export function formatRate(value: number | null | undefined): string {
   return `${percent}%`
 }
 
+/** 与上期对比的增长百分比；上期为 0 时无法计算，返回 null 由页面展示「--」 */
+export function growthRate(current: number, previous: number): number | null {
+  if (!Number.isFinite(previous) || previous === 0) return null
+  return ((current - previous) / previous) * 100
+}
+
+/**
+ * 环比文案：入参是 `growthRate` 的结果（已经是百分数）。
+ * 与上面的 `formatRate` 不是一回事，那个吃的是费率小数，故这里另起一个名字。
+ */
+export function formatGrowth(rate: number | null | undefined): string {
+  if (rate === null || rate === undefined || Number.isNaN(rate)) return '--'
+  if (Math.abs(rate) < 0.05) return '持平'
+  return `${Math.abs(rate).toFixed(1)}%`
+}
+
 /** ISO 字符串 -> 本地可读时间 */
 export function formatDateTime(value: string | null | undefined, pattern = DATETIME_PATTERN): string {
   if (!value) return '--'
@@ -66,4 +82,19 @@ export function dateRangeToFromTo(range: [string, string] | null | undefined): {
     from: from.startOf('day').toISOString(),
     to: to.endOf('day').toISOString(),
   }
+}
+
+/**
+ * 用餐时长：开台时间到现在，取整分钟。
+ * 「1 小时 5 分」比「11:03 开台」更好读，收银台与桌位管理用同一种说法。
+ */
+export function diningDuration(openedAt: string | null | undefined): string {
+  if (!openedAt) return '--'
+  const start = dayjs(openedAt)
+  if (!start.isValid()) return '--'
+  const minutes = Math.max(dayjs().diff(start, 'minute'), 0)
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${rest} 分`
 }

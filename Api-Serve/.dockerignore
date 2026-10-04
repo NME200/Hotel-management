@@ -1,0 +1,27 @@
+# 依赖与构建产物：镜像里由 pnpm install / nest build 重新生成
+node_modules
+dist
+
+# 真实密钥绝不能进镜像：容器运行时的配置一律通过环境变量注入
+.env
+.env.*
+!.env.example
+
+# 本机数据，不是代码
+uploads
+logs
+*.log
+coverage
+tmp
+
+# 编辑器与版本控制
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+
+# 测试与调试脚本（运行镜像用不到，减小构建上下文）
+scripts/smoke-*.cjs
+scripts/seed-*.cjs
+.tmp-*

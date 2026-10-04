@@ -98,13 +98,17 @@ export const CHANNEL_LABELS: Record<PaymentChannel, string> = {
   [PaymentChannel.Wechat]: '微信支付',
   [PaymentChannel.Alipay]: '支付宝',
   [PaymentChannel.Mock]: '模拟支付',
+  [PaymentChannel.Cash]: '现金',
+  [PaymentChannel.Offline]: '收款码',
 };
 
-/** 每个渠道必须齐备的字段，决定 ready 与 missingFields。 */
+/** 每个渠道必须齐备的字段，决定 ready 与 missingFields。线下渠道无需任何凭据。 */
 export const CHANNEL_REQUIRED_FIELDS: Record<PaymentChannel, string[]> = {
   [PaymentChannel.Wechat]: ['appId', 'mchId', 'apiKey', 'privateKey', 'notifyUrl'],
   [PaymentChannel.Alipay]: ['appId', 'privateKey', 'publicKey', 'notifyUrl'],
   [PaymentChannel.Mock]: [],
+  [PaymentChannel.Cash]: [],
+  [PaymentChannel.Offline]: [],
 };
 
 /** 各渠道需要单独管理的密钥字段（界面上逐个显示掩码与指纹）。 */
@@ -115,6 +119,8 @@ export const CHANNEL_SECRET_FIELDS: Record<
   [PaymentChannel.Wechat]: ['apiKey', 'privateKey', 'publicKey'],
   [PaymentChannel.Alipay]: ['privateKey', 'publicKey'],
   [PaymentChannel.Mock]: [],
+  [PaymentChannel.Cash]: [],
+  [PaymentChannel.Offline]: [],
 };
 
 export const SECRET_FIELD_LABELS: Record<string, string> = {

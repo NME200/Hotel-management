@@ -7,7 +7,9 @@ import {
   type EntityManager,
 } from 'typeorm';
 import {
+  AccountStatus,
   DINE_TYPE_LABELS,
+  DineType,
   ORDER_STATUS_LABELS,
   OrderStatus,
   PAY_STATUS_LABELS,
@@ -15,6 +17,8 @@ import {
   StoreStatus,
 } from '../../../common/constants/dict';
 import type { PageResult } from '../../../common/dto/page-result.dto';
+import { buildPageResult } from '../../../common/dto/page-result.dto';
+import { toSkipTake } from '../../../common/dto/page-query.dto';
 import { BusinessException } from '../../../common/exceptions/business.exception';
 import { TenantRepo } from '../../../common/repository/tenant.repo';
 import { generateOrderNo } from '../../../common/utils/id.util';
@@ -22,11 +26,14 @@ import { toYuan } from '../../../common/utils/money.util';
 import { Dish } from '../../../database/entities/dish.entity';
 import { DishSku } from '../../../database/entities/dish-sku.entity';
 import { Member } from '../../../database/entities/member.entity';
+import { Merchant } from '../../../database/entities/merchant.entity';
 import { Order } from '../../../database/entities/order.entity';
 import { OrderItem } from '../../../database/entities/order-item.entity';
 import { Payment } from '../../../database/entities/payment.entity';
+import { StoreTable } from '../../../database/entities/store-table.entity';
 import { OPEN_PAYMENT_STATUSES } from '../../payment/constants/payment.constant';
 import { MemberGrowthService } from '../../member-growth/member-growth.service';
+import { ClientMemberResolver } from '../auth/client-member.resolver';
 import { ClientCouponService } from '../coupon/client-coupon.service';
 import { ESTIMATE_PREPARE_MINUTES } from '../constants/client.constant';
 import type {
@@ -43,7 +50,8 @@ import type {
   OrderEstimate,
   OrderTraceStep,
 } from '../models/client-order.model';
-import { ClientOrderPriceService, readStockPlan, type PricedOrder, type StockPlan } from './client-order-price.service';
+import { ClientOrderPriceService, type PricedOrder, type StockPlan } from './client-order-price.service';
+import { deductStock } from './order-stock.util';
 import { ClientStoreService } from '../store/client-store.service';
 
 /** 跟踪页四步：已下单 → 商家接单 → 出餐中 → 已完成。 */
@@ -65,7 +73,9 @@ export class ClientOrderService {
     @InjectRepository(Order) orderRepository: Repository<Order>,
     @InjectRepository(OrderItem) itemRepository: Repository<OrderItem>,
     @InjectRepository(Member) memberRepository: Repository<Member>,
+    @InjectRepository(StoreTable) private readonly tables: Repository<StoreTable>,
     private readonly dataSource: DataSource,
+    private readonly profiles: ClientMemberResolver,
     private readonly pricing: ClientOrderPriceService,
     private readonly coupons: ClientCouponService,
     private readonly stores: ClientStoreService,
@@ -135,9 +145,19 @@ export class ClientOrderService {
       throw BusinessException.badRequest('订单金额为 0，请联系门店处理');
     }
 
-    const nickname = await this.memberNickname(merchantId, memberId);
+    const nickname = await this.customerNickname(merchantId, memberId);
+    // 桌号只认 token 反查的结果，前端传来的任何桌号文本都进不来
+    const tableNo = await this.resolveTableNo(merchantId, dto);
     const order = await this.dataSource.transaction(async (manager) => {
-      const saved = await this.persistOrder(manager, merchantId, memberId, nickname, dto, priced);
+      const saved = await this.persistOrder(
+        manager,
+        merchantId,
+        memberId,
+        nickname,
+        dto,
+        priced,
+        tableNo,
+      );
       const orderItems = new TenantRepo(manager.getRepository(OrderItem));
       await orderItems.createMany(
         merchantId,
@@ -205,16 +225,60 @@ export class ClientOrderService {
     };
   }
 
-  async detail(
-    merchantId: number,
-    memberId: number,
+  /**
+   * 跨门店「我的订单」：一个顾客账号在各家店的档案下的单混在一起，按下单时间倒序。
+   *
+   * 这里不能走 TenantRepo——它强制单租户条件，而这条查询本身就是跨租户的。
+   * 安全边界换成归属校验：条件始终是 `member_id IN (当前顾客的档案)`，
+   * 别人在任何一家店的单都查不出来。
+   */
+  async listAllStores(
+    customerId: number,
+    query: ClientOrderQueryDto,
+  ): Promise<PageResult<ClientOrderBriefView>> {
+    const profiles = await this.profiles.profilesOf(customerId);
+    if (!profiles.length) {
+      return buildPageResult([], 0, query.page, query.pageSize);
+    }
+
+    const { skip, take } = toSkipTake(query.page, query.pageSize);
+    const [rows, total] = await this.dataSource.getRepository(Order).findAndCount({
+      where: {
+        memberId: In(profiles.map((item) => item.id)),
+        ...(query.status ? { status: query.status } : {}),
+      },
+      relations: { items: true },
+      order: { id: 'DESC' },
+      skip,
+      take,
+    });
+
+    const stores = await this.storeLabelsOf(rows.map((order) => order.merchantId));
+    return buildPageResult(
+      rows.map((order) => ({
+        ...this.briefView(order, order.items ?? []),
+        storeName: stores.names.get(order.merchantId) ?? null,
+        storeCode: stores.codes.get(order.merchantId) ?? null,
+      })),
+      total,
+      query.page,
+      query.pageSize,
+    );
+  }
+
+  /**
+   * 订单详情与跟踪：按「这张单的会员档案属不属于当前顾客」放行，
+   * 而不是按请求带的门店——顾客从跨店列表点进别家的单也要能看到出餐进度。
+   */
+  async detailByOwner(
+    customerId: number,
     orderNo: string,
   ): Promise<ClientOrderTraceView> {
-    const order = await this.orders.findBy(merchantId, { orderNo, memberId });
-    if (!order) {
-      throw BusinessException.notFound('订单不存在');
-    }
-    return this.traceView(order, await this.itemsOf(order.id));
+    const order = await this.ownedOrder(customerId, orderNo);
+    return this.withStore(
+      await this.traceView(order, await this.itemsOf(order.id)),
+      order.merchantId,
+    );
   }
 
   /* ------------------------------ 取消 ------------------------------ */
@@ -226,15 +290,12 @@ export class ClientOrderService {
    * 让顾客在小程序里点一下就退款，账迟早对不平。
    */
   async cancel(
-    merchantId: number,
-    memberId: number,
+    customerId: number,
     orderNo: string,
     dto: CancelClientOrderDto,
   ): Promise<ClientOrderTraceView> {
-    const order = await this.orders.findBy(merchantId, { orderNo, memberId });
-    if (!order) {
-      throw BusinessException.notFound('订单不存在');
-    }
+    const order = await this.ownedOrder(customerId, orderNo);
+    const merchantId = order.merchantId;
     if (order.status !== OrderStatus.Pending) {
       throw BusinessException.badRequest('商家已接单，请联系门店取消');
     }
@@ -255,10 +316,88 @@ export class ClientOrderService {
       return saved;
     });
 
-    return this.traceView(cancelled, await this.itemsOf(cancelled.id));
+    return this.withStore(
+      await this.traceView(cancelled, await this.itemsOf(cancelled.id)),
+      merchantId,
+    );
   }
 
   /* ------------------------------ 内部 ------------------------------ */
+
+  /** 跨店读单时补上「这是哪家店的单」，顾客在全部订单里点进来的时候需要知道。 */
+  private async withStore<T extends ClientOrderBriefView>(
+    view: T,
+    merchantId: number,
+  ): Promise<T> {
+    const stores = await this.storeLabelsOf([merchantId]);
+    return {
+      ...view,
+      storeName: stores.names.get(merchantId) ?? null,
+      storeCode: stores.codes.get(merchantId) ?? null,
+    };
+  }
+
+  /** 按归属取单：orderNo 命中、且这条单的会员档案属于当前顾客。 */
+  private async ownedOrder(customerId: number, orderNo: string): Promise<Order> {
+    const profiles = await this.profiles.profilesOf(customerId);
+    const order = profiles.length
+      ? await this.dataSource.getRepository(Order).findOne({
+          where: { orderNo, memberId: In(profiles.map((item) => item.id)) },
+        })
+      : null;
+    if (!order) {
+      throw BusinessException.notFound('订单不存在');
+    }
+    return order;
+  }
+
+  /** 批量取门店名与商户编号，供跨店列表标注每条单是哪家店的。 */
+  private async storeLabelsOf(merchantIds: number[]): Promise<{
+    names: Map<number, string>;
+    codes: Map<number, string>;
+  }> {
+    const ids = [...new Set(merchantIds)];
+    if (!ids.length) {
+      return { names: new Map(), codes: new Map() };
+    }
+    const merchants = await this.dataSource.getRepository(Merchant).find({
+      where: { id: In(ids) },
+      select: { id: true, name: true, code: true },
+    });
+    return {
+      names: new Map(merchants.map((item) => [item.id, item.name] as const)),
+      codes: new Map(merchants.map((item) => [item.id, item.code] as const)),
+    };
+  }
+
+  /**
+   * 把桌位 token 换成桌号。堂食必须扫桌位码 —— 这是「只允许扫码堂食」的落点：
+   * 后端不接受手填桌号，所以顾客拼不出一个不属于自己的桌号。
+   *
+   * 非堂食一律忽略 token：前端从堂食切到自取/外送时，本地可能还留着上一个桌位。
+   */
+  private async resolveTableNo(
+    merchantId: number,
+    dto: CreateClientOrderDto,
+  ): Promise<string | null> {
+    if (dto.dineType !== DineType.DineIn) {
+      return null;
+    }
+    const token = dto.tableToken?.trim();
+    if (!token) {
+      throw BusinessException.badRequest('堂食需要扫描桌上的二维码，请扫码后重新下单');
+    }
+
+    const table = await this.tables.findOne({ where: { qrToken: token } });
+    // 「不存在」与「不属于本店」合并成同一句提示：否则可以用 token 探测别家店有没有这张桌
+    if (!table || table.merchantId !== merchantId) {
+      throw BusinessException.badRequest('桌位二维码无效，请重新扫码');
+    }
+    if (table.status !== AccountStatus.Active) {
+      throw BusinessException.badRequest('该桌位已停用，请联系店员');
+    }
+    return table.tableNo;
+  }
 
   private async persistOrder(
     manager: EntityManager,
@@ -267,6 +406,7 @@ export class ClientOrderService {
     memberNickname: string,
     dto: CreateClientOrderDto,
     priced: PricedOrder,
+    tableNo: string | null,
   ): Promise<Order> {
     const orders = new TenantRepo(manager.getRepository(Order));
     const created = new Date();
@@ -280,7 +420,7 @@ export class ClientOrderService {
       memberNickname,
       dineType: dto.dineType,
       status: OrderStatus.Pending,
-      tableNo: dto.tableNo ?? null,
+      tableNo,
       peopleCount: dto.peopleCount ?? 1,
       dishAmount: amounts.dishAmount,
       packingAmount: amounts.packingAmount,
@@ -307,9 +447,12 @@ export class ClientOrderService {
     throw BusinessException.conflict('下单过于频繁，请稍后重试');
   }
 
-  private async memberNickname(merchantId: number, memberId: number): Promise<string> {
-    const member = await this.members.findById(merchantId, memberId);
-    return member.nickname;
+  /** 订单上快照的是顾客昵称（身份在 customer 上，不在本店会员档案里）。 */
+  private async customerNickname(merchantId: number, memberId: number): Promise<string> {
+    const member = await this.members.findById(merchantId, memberId, {
+      relations: { customer: true },
+    });
+    return member.customer.nickname;
   }
 
   private async itemsOf(orderId: number): Promise<OrderItem[]> {
@@ -319,31 +462,8 @@ export class ClientOrderService {
   }
 
   private async deductStock(manager: EntityManager, merchantId: number, plan: StockPlan) {
-    const { dishIds, skuIds } = readStockPlan(plan);
-    const dishes = new TenantRepo(manager.getRepository(Dish));
-    const skus = new TenantRepo(manager.getRepository(DishSku));
-
-    if (dishIds.length) {
-      const rows = await dishes.list(merchantId, { where: { id: In(dishIds) } });
-      for (const dish of rows) {
-        const take = plan.get(dish.id) ?? 0;
-        if (take > 0 && dish.stock !== null) {
-          dish.stock = Math.max(dish.stock - take, 0);
-        }
-      }
-      await manager.getRepository(Dish).save(rows);
-    }
-
-    if (skuIds.length) {
-      const rows = await skus.list(merchantId, { where: { id: In(skuIds) } });
-      for (const sku of rows) {
-        const take = plan.get(-sku.id - 1) ?? 0;
-        if (take > 0 && sku.stock !== null) {
-          sku.stock = Math.max(sku.stock - take, 0);
-        }
-      }
-      await manager.getRepository(DishSku).save(rows);
-    }
+    // 实现在 order-stock.util.ts：收银台线下点餐走的是同一个函数，避免第二份扣库存逻辑
+    await deductStock(manager, merchantId, plan);
   }
 
   /** 取消订单要把库存还回去：与扣减同一份计划口径，从订单明细反推。 */
@@ -405,6 +525,9 @@ export class ClientOrderService {
       payAmount: order.payAmount,
       remark: order.remark,
       handleRemark: order.handleRemark,
+      // 单店视图不需要标注门店，跨店列表由 listAllStores 覆盖这两个字段
+      storeName: null,
+      storeCode: null,
       createdAt: order.createdAt,
       acceptedAt: order.acceptedAt,
       readyAt: order.readyAt,

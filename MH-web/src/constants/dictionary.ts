@@ -21,18 +21,22 @@ import type {
   PromotionType,
 } from '@/api/types/promotion'
 import type {
-  MemberGender,
-  MemberLevel,
-  MemberStatus,
-} from '@/api/types/member'
-import type {
   DineType,
   OrderStatus,
 } from '@/api/types/order'
 import type { StaffRole } from '@/api/types/auth'
 import type { StaffStatus } from '@/api/types/staff'
 import type { StoreStatus } from '@/api/types/store'
+import type { TableStatus } from '@/api/types/table'
 import type { MerchantPaymentStatus, PaymentChannel } from '@/api/types/payment'
+import type {
+  PrintMode,
+  PrintPaperSize,
+  PrinterStatus,
+  PrintProvider,
+  PrintTaskStatus,
+  PrintTicketType,
+} from '@/api/types/print'
 
 /** Element Plus el-tag 的 type 取值 */
 export type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
@@ -312,32 +316,6 @@ export const STORE_STATUS_OPTIONS: readonly DictOption<StoreStatus>[] = [
 
 export const STORE_STATUS_DICT = buildDictMap(STORE_STATUS_OPTIONS)
 
-/* ------------------------------ 会员 ------------------------------ */
-
-export const MEMBER_LEVEL_OPTIONS: readonly DictOption<MemberLevel>[] = [
-  { value: 'normal', label: '普通会员', tag: 'info' },
-  { value: 'silver', label: '银卡会员', tag: 'primary' },
-  { value: 'gold', label: '金卡会员', tag: 'warning' },
-  { value: 'vip', label: 'VIP会员', tag: 'danger' },
-]
-
-export const MEMBER_LEVEL_DICT = buildDictMap(MEMBER_LEVEL_OPTIONS)
-
-export const MEMBER_STATUS_OPTIONS: readonly DictOption<MemberStatus>[] = [
-  { value: 'active', label: '正常', tag: 'success' },
-  { value: 'disabled', label: '已禁用', tag: 'danger' },
-]
-
-export const MEMBER_STATUS_DICT = buildDictMap(MEMBER_STATUS_OPTIONS)
-
-export const MEMBER_GENDER_OPTIONS: readonly DictOption<MemberGender>[] = [
-  { value: 'unknown', label: '未知', tag: 'info' },
-  { value: 'male', label: '男', tag: 'primary' },
-  { value: 'female', label: '女', tag: 'danger' },
-]
-
-export const MEMBER_GENDER_DICT = buildDictMap(MEMBER_GENDER_OPTIONS)
-
 /* ------------------------------ 员工 ------------------------------ */
 
 export const STAFF_ROLE_OPTIONS: readonly DictOption<StaffRole>[] = [
@@ -379,3 +357,77 @@ export const MERCHANT_PAYMENT_STATUS_OPTIONS: readonly DictOption<MerchantPaymen
 ]
 
 export const MERCHANT_PAYMENT_STATUS_DICT = buildDictMap(MERCHANT_PAYMENT_STATUS_OPTIONS)
+
+/* ------------------------------ 小票打印 ------------------------------ */
+
+export const PRINT_TICKET_TYPE_OPTIONS: readonly DictOption<PrintTicketType>[] = [
+  { value: 'customer', label: '顾客小票', tag: 'primary' },
+  { value: 'kitchen', label: '后厨小票', tag: 'warning' },
+]
+
+export const PRINT_TICKET_TYPE_DICT = buildDictMap(PRINT_TICKET_TYPE_OPTIONS)
+
+export const PRINT_MODE_OPTIONS: readonly DictOption<PrintMode>[] = [
+  { value: 'browser', label: '浏览器小票机', tag: 'primary' },
+  { value: 'cloud', label: '云打印机', tag: 'success' },
+]
+
+export const PRINT_MODE_DICT = buildDictMap(PRINT_MODE_OPTIONS)
+
+export const PRINT_PAPER_SIZE_OPTIONS: readonly { value: PrintPaperSize; label: string }[] = [
+  { value: '80mm', label: '80mm（收银台常用）' },
+  { value: '58mm', label: '58mm（小型机）' },
+]
+
+export const PRINT_TASK_STATUS_OPTIONS: readonly DictOption<PrintTaskStatus>[] = [
+  { value: 'pending', label: '待打印', tag: 'warning' },
+  { value: 'success', label: '已打印', tag: 'success' },
+  { value: 'failed', label: '打印失败', tag: 'danger' },
+]
+
+export const PRINT_TASK_STATUS_DICT = buildDictMap(PRINT_TASK_STATUS_OPTIONS)
+
+export const PRINTER_STATUS_OPTIONS: readonly DictOption<PrinterStatus>[] = [
+  { value: 'active', label: '启用', tag: 'success' },
+  { value: 'disabled', label: '停用', tag: 'info' },
+]
+
+export const PRINTER_STATUS_DICT = buildDictMap(PRINTER_STATUS_OPTIONS)
+
+export const PRINT_PROVIDER_OPTIONS: readonly { value: PrintProvider; label: string }[] = [
+  { value: 'feie', label: '飞鹅' },
+  { value: 'yilianyun', label: '易联云' },
+]
+
+export const PRINT_PROVIDER_LABEL: Record<PrintProvider, string> = {
+  feie: '飞鹅',
+  yilianyun: '易联云',
+}
+
+/** 触发来源文案，打印流水里直接展示 */
+export const PRINT_TRIGGER_LABEL: Record<string, string> = {
+  auto: '自动打印',
+  manual: '手动打印',
+  retry: '失败重试',
+}
+
+/** 自动打印时机候选项 */
+export const AUTO_PRINT_ON_OPTIONS: readonly { value: 'accepted' | 'ready'; label: string }[] = [
+  { value: 'accepted', label: '接单后立即打印' },
+  { value: 'ready', label: '出餐时打印' },
+]
+
+/** 单次最多打印份数，与后端 PRINT_MAX_COPIES 保持一致 */
+export const PRINT_MAX_COPIES = 5
+
+/* ------------------------------ 桌位 ------------------------------ */
+
+export const TABLE_STATUS_OPTIONS: readonly DictOption<TableStatus>[] = [
+  { value: 'active', label: '启用', tag: 'success' },
+  { value: 'disabled', label: '停用', tag: 'info' },
+]
+
+export const TABLE_STATUS_DICT = buildDictMap(TABLE_STATUS_OPTIONS)
+
+/** 单次批量建桌上限，与后端 TABLE_BATCH_MAX 保持一致 */
+export const TABLE_BATCH_MAX = 50

@@ -63,4 +63,26 @@ export class Store extends TenantBaseEntity {
     comment: '营业状态',
   })
   status!: StoreStatus;
+
+  @Column({
+    type: 'boolean',
+    default: false,
+    comment: '接单后自动打印小票：关掉后只能手动点打印，避免默认打扰',
+  })
+  autoPrint!: boolean;
+
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'accepted',
+    comment: '自动打印触发时机 accepted=接单后 | ready=出餐后',
+  })
+  autoPrintOn!: string;
+
+  @Column({
+    type: 'int',
+    default: 1,
+    comment: '顾客小票默认份数，后厨小票份数在 printer 上按台配置',
+  })
+  customerCopies!: number;
 }

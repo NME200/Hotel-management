@@ -27,3 +27,15 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+
+# 部署环境变量（含真实数据库/Redis 口令与加密主密钥），只提交模板
+deploy/.env
+deploy/.env.*
+!deploy/.env.production.example
+
+# 整目录打包备份与本机临时产物（Api-Serve.zip 有 178MB，GitHub 单文件上限 100MB）
+*.zip
+*.tmp
+# 调试残留：x 是 compose.backend.yml 的旧草稿，snap-login.yaml 是页面快照
+/x
+/snap-login.yaml

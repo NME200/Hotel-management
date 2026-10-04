@@ -7,7 +7,7 @@ import {
   UserType,
 } from '../../common/constants/dict';
 import { CacheKey } from '../../common/constants/cache-key';
-import { resolvePermissions } from '../../common/constants/permission';
+import { Permission, resolvePermissions } from '../../common/constants/permission';
 import { BusinessException } from '../../common/exceptions/business.exception';
 import type { AuthUser } from '../../common/models/auth-context';
 import { hashPassword, verifyPassword } from '../../common/utils/password.util';
@@ -45,6 +45,29 @@ export class AuthService {
   ) {}
 
   async loginByMerchant(dto: MerchantLoginDto): Promise<AuthResult> {
+    return this.authenticateStaff(dto, null);
+  }
+
+  /**
+   * 收银台（CM-web）登录：在普通商户登录之上多一道权限闸门。
+   *
+   * 权限校验刻意放在**密码验证之后**：先验密码再判权限，
+   * 否则「这个账号存不存在」会从 403 与 401 的差别里泄露出去。
+   *
+   * 无权限时**不累加失败计数** —— 密码是对的，只是没这个角色，
+   * 把它算作登录失败会让收银员试几次就被锁 10 分钟。
+   */
+  async loginByCashier(dto: MerchantLoginDto): Promise<AuthResult> {
+    return this.authenticateStaff(dto, {
+      permission: Permission.CashierUse,
+      message: '该账号没有收银台权限，请联系店长在「员工管理」中调整为收银员或以上角色',
+    });
+  }
+
+  private async authenticateStaff(
+    dto: MerchantLoginDto,
+    requirement: { permission: Permission; message: string } | null,
+  ): Promise<AuthResult> {
     const failureKey = CacheKey.loginFailure(`merchant:${dto.merchantCode}:${dto.username}`);
     await this.assertNotLocked(failureKey);
 
@@ -66,6 +89,13 @@ export class AuthService {
     if (!staff || !passwordOk) {
       await this.recordFailure(failureKey);
       throw new BusinessException('商户编号或密码错误', HttpStatus.UNAUTHORIZED);
+    }
+
+    if (requirement) {
+      const permissions = resolvePermissions(UserType.Merchant, staff.role);
+      if (!permissions.includes(requirement.permission)) {
+        throw new BusinessException(requirement.message, HttpStatus.FORBIDDEN);
+      }
     }
 
     await this.redis.del(failureKey);

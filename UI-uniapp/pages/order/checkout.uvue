@@ -27,7 +27,7 @@
         </view>
         <view v-for="(line, index) in lines" :key="index" class="dish-row">
           <view class="thumb-box">
-            <image v-if="line.dishImage != null" class="thumb" :src="line.dishImage!" mode="aspectFill"></image>
+            <image v-if="imageUrl(line.dishImage) != ''" class="thumb" :src="imageUrl(line.dishImage)" mode="aspectFill"></image>
             <view v-else class="thumb thumb-fallback"><text class="thumb-char">{{ firstChar(line.dishName) }}</text></view>
           </view>
           <view class="dish-main">
@@ -60,33 +60,35 @@
         <text v-else class="coupon-none">{{ couponHint }}</text>
       </view>
 
-      <!-- 3. 就餐方式：值必须是后端的 dine_in / pickup / takeout -->
+      <!-- 3. 就餐方式：值必须是后端的 dine_in / pickup / takeout。
+           堂食只认扫码 —— 没扫过桌位码时点堂食只提示，不给选。 -->
       <view class="card">
         <text class="card-title">就餐方式</text>
         <view class="dine-row">
-          <view :class="dineType == 'dine_in' ? 'dine dine-on' : 'dine'" @click="chooseDine('dine_in')">
-            <text :class="dineType == 'dine_in' ? 'dine-text-on' : 'dine-text'">堂食</text>
+          <view :class="dineClass('dine_in')" @click="chooseDine('dine_in')">
+            <text :class="dineTextClass('dine_in')">堂食</text>
           </view>
-          <view :class="dineType == 'pickup' ? 'dine dine-on' : 'dine'" @click="chooseDine('pickup')">
-            <text :class="dineType == 'pickup' ? 'dine-text-on' : 'dine-text'">自取</text>
+          <view :class="dineClass('pickup')" @click="chooseDine('pickup')">
+            <text :class="dineTextClass('pickup')">自取</text>
           </view>
-          <view :class="dineType == 'takeout' ? 'dine dine-on' : 'dine'" @click="chooseDine('takeout')">
-            <text :class="dineType == 'takeout' ? 'dine-text-on' : 'dine-text'">外送</text>
+          <view :class="dineClass('takeout')" @click="chooseDine('takeout')">
+            <text :class="dineTextClass('takeout')">外送</text>
           </view>
         </view>
+        <text v-if="!hasTable" class="dine-tip">堂食需要扫描桌上的二维码；也可以选自取或外送</text>
       </view>
 
-      <!-- 4. 桌号（仅堂食）+ 备注 -->
-      <!-- 选券弹层开着时换成同尺寸的静态占位：input/textarea 是原生控件，
-           既会盖在弹层上面，也会抢走本该落在券行上的点击，z-index 压不住它们。 -->
+      <!-- 4. 桌号（仅堂食，扫码带入、不可编辑）+ 备注 -->
+      <!-- 选券弹层开着时备注换成同尺寸的静态占位：textarea 是原生控件，
+           既会盖在弹层上面，也会抢走本该落在券行上的点击，z-index 压不住它。
+           桌号现在只是文本，没有这个问题，所以不再跟着切换。 -->
       <view class="card">
         <view v-if="dineType == 'dine_in'" class="field-box">
           <text class="card-title">桌号</text>
-          <input v-if="!sheetVisible" class="field" v-model="tableNo" placeholder="请填写桌号，如 A12" :maxlength="16"></input>
-          <view v-else class="field">
-            <text v-if="tableNo.length == 0" class="field-ph">请填写桌号，如 A12</text>
-            <text v-else class="field-text">{{ tableNo }}</text>
+          <view class="field">
+            <text class="field-text">{{ scannedTableNo }}</text>
           </view>
+          <text class="field-tip">桌号由扫码自动带入；要换桌请扫新桌上的二维码</text>
         </view>
         <view class="field-box">
           <view class="head-row">
@@ -176,11 +178,11 @@
 
 <script setup lang="uts">
   import { onShow } from '@dcloudio/uni-app'
-  import { isLogged } from '../../common/session.uts'
+  import { isLogged, tableNo as storedTableNo, tableToken } from '../../common/session.uts'
   import { checkout, createOrder } from '../../common/api.uts'
   import { cartItemsPayload, cartLines, changeQuantity, clearCart } from '../../common/cart.uts'
   import { Checkout, CheckoutLine, CheckoutUsedCoupon, UsableCoupon } from '../../common/models.uts'
-  import { amountText, moneyText } from '../../common/format.uts'
+  import { amountText, imageUrl, moneyText } from '../../common/format.uts'
   import { toast } from '../../common/request.uts'
 
   const checkoutData = ref<Checkout | null>(null)
@@ -188,7 +190,9 @@
   const cartKeys = ref<string[]>([] as string[])
   const dineType = ref('dine_in')
   const couponId = ref(0)
-  const tableNo = ref('')
+  // 桌号不再是可输入字段：它由扫码带入，只用于展示；下单时提交的是 token 而不是桌号文本
+  const scannedTableNo = ref('')
+  const hasTable = ref(false)
   const remark = ref('')
   const sheetVisible = ref(false)
   const computing = ref(false)
@@ -286,8 +290,28 @@
     if (dineType.value == value) {
       return
     }
+    // 堂食只认扫码：没有桌位凭据时不给选，否则后端一定会拒单，不如在这里说清楚
+    if (value == 'dine_in' && !hasTable.value) {
+      toast('堂食需要先扫描桌上的二维码')
+      return
+    }
     dineType.value = value
     recompute()
+  }
+
+  /** 堂食胶囊在没有桌位凭据时降饱和：点得动但只提示，不做成假禁用让人猜。 */
+  function dineClass(value: string) : string {
+    if (dineType.value == value) {
+      return 'dine dine-on'
+    }
+    return value == 'dine_in' && !hasTable.value ? 'dine dine-off' : 'dine'
+  }
+
+  function dineTextClass(value: string) : string {
+    if (dineType.value == value) {
+      return 'dine-text-on'
+    }
+    return value == 'dine_in' && !hasTable.value ? 'dine-text dine-text-off' : 'dine-text'
   }
 
   function openSheet() : void {
@@ -337,10 +361,14 @@
       toast('请先选择菜品')
       return
     }
+    // 桌号只从桌位凭据来：堂食没扫过码就别提交了，后端也会拒
+    const token = dineType.value == 'dine_in' ? tableToken() : ''
+    if (dineType.value == 'dine_in' && token.length == 0) {
+      toast('堂食需要先扫描桌上的二维码')
+      return
+    }
     submitting.value = true
-    // 只在堂食时提交桌号，切到自取/外送不能把旧桌号带过去
-    const no = dineType.value == 'dine_in' ? tableNo.value : ''
-    const result = await createOrder(dineType.value, cartItemsPayload(), couponId.value, no, remark.value)
+    const result = await createOrder(dineType.value, cartItemsPayload(), couponId.value, token, remark.value)
     submitting.value = false
     const order = result.order
     if (order == null) {
@@ -367,6 +395,12 @@
       return
     }
     logged.value = true
+    // 每次回到本页都重读一次桌位：顾客可能刚扫了桌上的码，或中途换了桌
+    hasTable.value = tableToken().length > 0
+    scannedTableNo.value = storedTableNo()
+    if (!hasTable.value && dineType.value == 'dine_in') {
+      dineType.value = 'pickup'
+    }
     recompute()
   })
 </script>
@@ -615,6 +649,22 @@
     color: $brand;
   }
 
+  /* 没扫桌位码时的堂食：降饱和表示「点得动但不可选」，点了会提示原因 */
+  .dine-off {
+    opacity: 0.45;
+  }
+
+  /* 放在 .dine-text 之后，靠层叠顺序覆盖它的颜色 */
+  .dine-text-off {
+    color: $text-4;
+  }
+
+  .dine-tip {
+    margin-top: $space-2;
+    font-size: $font-caption;
+    color: $text-3;
+  }
+
   /* 桌号与备注 */
   .field-box {
     margin-top: $space-4;
@@ -641,6 +691,12 @@
   .field-ph {
     font-size: $font-body;
     color: $text-4;
+  }
+
+  .field-tip {
+    margin-top: $space-1;
+    font-size: $font-caption;
+    color: $text-3;
   }
 
   .counter {
